@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IsaacLab / training outputs
+.cache/
+logs/
+*.pt
+events.out.tfevents.*
+
+# Local editor and OS noise
+.DS_Store
+.vscode/
+.idea/
+
+# Nested source-repo metadata copied with assets.
+assets/BPX/.git/

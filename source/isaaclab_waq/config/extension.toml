@@ -1,0 +1,20 @@
+[package]
+version = "0.1.0"
+category = "isaaclab"
+readme = "README.md"
+title = "IsaacLab WAQ BPX"
+author = "IsaacLab WAQ BPX Developers"
+maintainer = "IsaacLab WAQ BPX Developers"
+description = "BPX quadruped DreamWaQ rough-terrain locomotion tasks for IsaacLab."
+repository = "local"
+keywords = ["extension", "isaaclab", "bpx", "dreamwaq", "locomotion"]
+
+[dependencies]
+"isaaclab" = {}
+"isaaclab_assets" = {}
+"isaaclab_rl" = {}
+"isaaclab_tasks" = {}
+
+[[python.module]]
+name = "isaaclab_waq"
+

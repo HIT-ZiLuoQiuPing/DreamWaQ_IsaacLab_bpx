@@ -12,6 +12,12 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def _curriculum_step_counter(env: ManagerBasedRLEnv) -> int:
+    """Return global curriculum steps, including resume offset from a checkpoint."""
+
+    return int(getattr(env, "common_step_counter", 0)) + int(getattr(env, "_waq_curriculum_step_offset", 0))
+
+
 def terrain_levels_vel(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
@@ -49,7 +55,7 @@ def terrain_levels_vel(
     streak = env._waq_terrain_success_streak
     streak[env_ids] = torch.where(successful, streak[env_ids] + 1, torch.zeros_like(streak[env_ids]))
 
-    step_counter = int(getattr(env, "common_step_counter", 0))
+    step_counter = _curriculum_step_counter(env)
     if step_counter < warmup_steps:
         allowed_max_level = 0
     else:
@@ -104,8 +110,9 @@ def command_vel_stages(
     del env_ids
     command_term = env.command_manager.get_term(command_name)
     selected = velocity_stages[0]
+    step_counter = _curriculum_step_counter(env)
     for stage in velocity_stages:
-        if env.common_step_counter >= stage["step"]:
+        if step_counter >= stage["step"]:
             selected = stage
         else:
             break

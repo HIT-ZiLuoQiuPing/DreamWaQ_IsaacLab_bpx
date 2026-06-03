@@ -7,10 +7,13 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import select
 import shutil
 import subprocess
 import sys
 import time
+import termios
+import tty
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT / "source" / "isaaclab_waq"))
@@ -57,10 +60,16 @@ parser.add_argument("--video", action="store_true", default=False, help="Record 
 parser.add_argument("--video_length", type=int, default=1000, help="Length of the recorded video in sim steps.")
 parser.add_argument("--video_dir", type=str, default=None, help="Optional directory for recorded videos.")
 parser.add_argument("--gui", action="store_true", default=False, help="Allow GUI/RTX rendering for local visualization.")
-parser.add_argument("--command_x", type=float, default=0.4, help="Fixed forward command used for play.")
+parser.add_argument("--command_x", type=float, default=0.6, help="Fixed forward command used for play.")
 parser.add_argument("--command_y", type=float, default=0.0, help="Fixed lateral command used for play.")
 parser.add_argument("--command_yaw", type=float, default=0.0, help="Fixed yaw command used for play.")
 parser.add_argument("--random_commands", action="store_true", default=False, help="Use environment-randomized commands.")
+parser.add_argument("--interactive", action="store_true", default=False, help="Control fixed play commands from the terminal.")
+parser.add_argument("--command_step", type=float, default=0.1, help="Interactive linear command increment.")
+parser.add_argument("--yaw_step", type=float, default=0.1, help="Interactive yaw command increment.")
+parser.add_argument("--terrain_level", type=int, default=None, help="Maximum generated terrain level for play.")
+parser.add_argument("--follow_camera", action="store_true", default=False, help="Update the camera to follow env 0.")
+parser.add_argument("--camera_distance", type=float, default=3.0, help="Distance used by --follow_camera.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -154,9 +163,106 @@ def _set_fixed_command(env, command: tuple[float, float, float]) -> bool:
     return True
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _format_command(command: list[float]) -> str:
+    return f"vx={command[0]:.2f}, vy={command[1]:.2f}, wz={command[2]:.2f}"
+
+
+class _TerminalCommandController:
+    """Small non-blocking terminal controller for play commands."""
+
+    def __init__(self, enabled: bool, command_step: float, yaw_step: float):
+        self.enabled = enabled and sys.stdin.isatty()
+        self.command_step = command_step
+        self.yaw_step = yaw_step
+        self._fd = None
+        self._old_settings = None
+
+    def __enter__(self):
+        if self.enabled:
+            self._fd = sys.stdin.fileno()
+            self._old_settings = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+            print(
+                "[INFO] Interactive terminal control: "
+                "W/S vx, A/D vy, Q/E yaw, F fast, C crawl, Space stop, R reset, +/- step.",
+                flush=True,
+            )
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.enabled and self._old_settings is not None:
+            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_settings)
+
+    def poll(self, command: list[float]) -> bool:
+        if not self.enabled:
+            return False
+        changed = False
+        while select.select([sys.stdin], [], [], 0.0)[0]:
+            key = sys.stdin.read(1)
+            lower = key.lower()
+            if lower == "w":
+                command[0] += self.command_step
+            elif lower == "s":
+                command[0] -= self.command_step
+            elif lower == "a":
+                command[1] += self.command_step
+            elif lower == "d":
+                command[1] -= self.command_step
+            elif lower == "q":
+                command[2] += self.yaw_step
+            elif lower == "e":
+                command[2] -= self.yaw_step
+            elif lower == "f":
+                command[0] = max(command[0], 1.0)
+            elif lower == "c":
+                command[0] = 0.3
+            elif lower == "r":
+                command[0], command[1], command[2] = 0.6, 0.0, 0.0
+            elif key == " ":
+                command[0], command[1], command[2] = 0.0, 0.0, 0.0
+            elif key == "+":
+                self.command_step = _clamp(self.command_step + 0.05, 0.05, 0.5)
+                self.yaw_step = _clamp(self.yaw_step + 0.05, 0.05, 0.5)
+            elif key == "-":
+                self.command_step = _clamp(self.command_step - 0.05, 0.05, 0.5)
+                self.yaw_step = _clamp(self.yaw_step - 0.05, 0.05, 0.5)
+            else:
+                continue
+
+            command[0] = _clamp(command[0], -0.6, 1.8)
+            command[1] = _clamp(command[1], -0.4, 0.4)
+            command[2] = _clamp(command[2], -0.8, 0.8)
+            changed = True
+
+        if changed:
+            print(f"[INFO] Play command: {_format_command(command)}", flush=True)
+        return changed
+
+
+def _update_follow_camera(env, distance: float):
+    try:
+        robot = env.unwrapped.scene["robot"]
+        root_pos = robot.data.root_pos_w[0].detach().cpu()
+        eye = (
+            float(root_pos[0] - distance),
+            float(root_pos[1] - 0.65 * distance),
+            float(root_pos[2] + 1.2),
+        )
+        target = (float(root_pos[0]), float(root_pos[1]), float(root_pos[2] + 0.25))
+        env.unwrapped.sim.set_camera_view(eye=eye, target=target)
+    except (AttributeError, KeyError, IndexError, RuntimeError):
+        return
+
+
 def main():
     device = args_cli.device if args_cli.device is not None else "cuda:0"
     env_cfg = _parse_env_cfg(args_cli.task, device=device, num_envs=args_cli.num_envs)
+    if args_cli.terrain_level is not None:
+        env_cfg.scene.terrain.max_init_terrain_level = args_cli.terrain_level
     agent_cfg = _load_waq_cfg(args_cli.task)
     log_root_path = os.path.abspath(os.path.join("logs", "waq", agent_cfg.experiment_name))
     checkpoint = args_cli.checkpoint or get_checkpoint_path(log_root_path, ".*", "model_.*.pt")
@@ -200,36 +306,40 @@ def main():
         raise SystemExit(2) from exc
     policy = runner.get_inference_policy()
 
-    fixed_command = (args_cli.command_x, args_cli.command_y, args_cli.command_yaw)
+    fixed_command = [args_cli.command_x, args_cli.command_y, args_cli.command_yaw]
     if not args_cli.random_commands:
         if _set_fixed_command(env, fixed_command):
-            print(f"[INFO] Using fixed play command: vx={fixed_command[0]:.2f}, vy={fixed_command[1]:.2f}, wz={fixed_command[2]:.2f}")
+            print(f"[INFO] Using fixed play command: {_format_command(fixed_command)}")
 
     obs, extras = _unpack_observations(env.get_observations())
     history = _groups(extras)["cenet"]
     dt = env.unwrapped.step_dt
 
     step = 0
-    while simulation_app.is_running() and (args_cli.max_steps <= 0 or step < args_cli.max_steps):
-        start_time = time.time()
-        with torch.inference_mode():
-            if not args_cli.random_commands:
-                _set_fixed_command(env, fixed_command)
-            actions = policy(obs.to(device), history.to(device))
-            obs, _, _, infos = env.step(actions)
-            if not args_cli.random_commands:
-                _set_fixed_command(env, fixed_command)
-                obs, extras = _unpack_observations(env.get_observations())
-                history = _groups(extras)["cenet"]
-            else:
-                history = _groups(infos)["cenet"]
-        step += 1
-        if args_cli.video and step >= args_cli.video_length:
-            break
+    with _TerminalCommandController(args_cli.interactive, args_cli.command_step, args_cli.yaw_step) as controller:
+        while simulation_app.is_running() and (args_cli.max_steps <= 0 or step < args_cli.max_steps):
+            start_time = time.time()
+            with torch.inference_mode():
+                if not args_cli.random_commands:
+                    controller.poll(fixed_command)
+                    _set_fixed_command(env, fixed_command)
+                actions = policy(obs.to(device), history.to(device))
+                obs, _, _, infos = env.step(actions)
+                if not args_cli.random_commands:
+                    _set_fixed_command(env, fixed_command)
+                    obs, extras = _unpack_observations(env.get_observations())
+                    history = _groups(extras)["cenet"]
+                else:
+                    history = _groups(infos)["cenet"]
+            if args_cli.follow_camera:
+                _update_follow_camera(env, args_cli.camera_distance)
+            step += 1
+            if args_cli.video and step >= args_cli.video_length:
+                break
 
-        sleep_time = dt - (time.time() - start_time)
-        if args_cli.real_time and sleep_time > 0:
-            time.sleep(sleep_time)
+            sleep_time = dt - (time.time() - start_time)
+            if args_cli.real_time and sleep_time > 0:
+                time.sleep(sleep_time)
 
     print(f"[INFO] WAQ play finished after {step} steps.", flush=True)
     env.close()

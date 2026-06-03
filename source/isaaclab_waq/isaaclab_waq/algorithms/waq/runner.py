@@ -712,6 +712,8 @@ class DreamWaQRunner:
         if load_optimizer and "optimizer_state_dict" in loaded_dict:
             self.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
         self.current_learning_iteration = loaded_dict.get("iter", 0)
+        env = self._unwrap_env()
+        env._waq_curriculum_step_offset = self.current_learning_iteration * self.cfg.num_steps_per_env
         return loaded_dict.get("infos")
 
     def get_inference_policy(self):

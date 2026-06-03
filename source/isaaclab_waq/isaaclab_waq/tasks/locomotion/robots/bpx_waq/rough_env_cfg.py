@@ -312,8 +312,8 @@ class RewardsCfg:
 
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=2.0,
-        params={"command_name": "base_velocity", "std": 0.35},
+        weight=2.4,
+        params={"command_name": "base_velocity", "std": 0.32},
     )
     track_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp,
@@ -322,12 +322,12 @@ class RewardsCfg:
     )
     track_forward_velocity_fine = RewTerm(
         func=mdp.track_forward_velocity_exp,
-        weight=1.5,
+        weight=2.2,
         params={"command_name": "base_velocity", "std": 0.25},
     )
     forward_velocity_error = RewTerm(
         func=mdp.forward_velocity_error_l1,
-        weight=-0.8,
+        weight=-1.2,
         params={"command_name": "base_velocity"},
     )
     no_forward_motion = RewTerm(
@@ -501,31 +501,37 @@ class CurriculumCfg:
                 {"step": 0, "lin_vel_x": (0.10, 0.45), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
                 {
                     "step": 4000 * 12,
-                    "lin_vel_x": (0.05, 0.60),
+                    "lin_vel_x": (0.10, 0.65),
                     "lin_vel_y": (0.0, 0.0),
                     "ang_vel_z": (-0.10, 0.10),
                 },
                 {
                     "step": 8000 * 12,
-                    "lin_vel_x": (-0.05, 0.75),
+                    "lin_vel_x": (0.10, 0.85),
                     "lin_vel_y": (-0.05, 0.05),
                     "ang_vel_z": (-0.18, 0.18),
                 },
                 {
-                    "step": 14000 * 12,
-                    "lin_vel_x": (-0.15, 0.95),
+                    "step": 12000 * 12,
+                    "lin_vel_x": (0.15, 1.05),
                     "lin_vel_y": (-0.10, 0.10),
                     "ang_vel_z": (-0.25, 0.25),
                 },
                 {
+                    "step": 16000 * 12,
+                    "lin_vel_x": (0.15, 1.20),
+                    "lin_vel_y": (-0.12, 0.12),
+                    "ang_vel_z": (-0.30, 0.30),
+                },
+                {
                     "step": 22000 * 12,
-                    "lin_vel_x": (-0.25, 1.10),
+                    "lin_vel_x": (0.00, 1.35),
                     "lin_vel_y": (-0.18, 0.18),
                     "ang_vel_z": (-0.40, 0.40),
                 },
                 {
                     "step": 32000 * 12,
-                    "lin_vel_x": (-0.45, 1.25),
+                    "lin_vel_x": (-0.20, 1.45),
                     "lin_vel_y": (-0.30, 0.30),
                     "ang_vel_z": (-0.60, 0.60),
                 },

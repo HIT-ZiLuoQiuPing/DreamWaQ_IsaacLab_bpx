@@ -121,8 +121,9 @@ class DreamWaQRunner:
         estimator_target = self._require_group(groups, "estimator").to(self.device)
 
         self.policy.train()
-        rewbuffer: deque[float] = deque(maxlen=100)
-        lenbuffer: deque[float] = deque(maxlen=100)
+        episode_buffer_size = max(1000, int(self.env.num_envs))
+        rewbuffer: deque[float] = deque(maxlen=episode_buffer_size)
+        lenbuffer: deque[float] = deque(maxlen=episode_buffer_size)
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
         total_iterations = self.current_learning_iteration + num_learning_iterations
@@ -170,6 +171,7 @@ class DreamWaQRunner:
                     )
 
                     rewards = rewards.to(self.device).view(-1)
+                    raw_rewards_for_logging = rewards.clone()
                     dones = dones.to(self.device).view(-1).bool()
                     done_count += int(dones.sum().item())
                     if "time_outs" in infos:
@@ -198,7 +200,7 @@ class DreamWaQRunner:
                         log_info.update(infos["log"])
                     if log_info:
                         ep_infos.append(log_info)
-                    cur_reward_sum += rewards
+                    cur_reward_sum += raw_rewards_for_logging
                     done_ids = dones.nonzero(as_tuple=False).flatten()
                     if len(done_ids) > 0:
                         completed_rewards = cur_reward_sum[done_ids].cpu().numpy().tolist()
@@ -221,6 +223,7 @@ class DreamWaQRunner:
                 self._last_rollout_stats = {
                     "done_rate": done_count / rollout_transitions,
                     "timeout_rate": timeout_count / rollout_transitions,
+                    "completed_episode_count": len(iter_completed_lengths),
                     "mean_completed_reward": self._mean_list(iter_completed_rewards),
                     "mean_completed_episode_length": self._mean_list(iter_completed_lengths),
                     "action_abs": action_abs_sum / max(rollout_stat_count, 1),
@@ -522,6 +525,7 @@ class DreamWaQRunner:
         rollout_stats = self._last_rollout_stats
         done_rate = float(rollout_stats.get("done_rate", 0.0) or 0.0)
         timeout_rate = float(rollout_stats.get("timeout_rate", 0.0) or 0.0)
+        completed_episode_count = int(rollout_stats.get("completed_episode_count", 0) or 0)
         action_abs = float(rollout_stats.get("action_abs", 0.0) or 0.0)
         action_mean_abs = float(rollout_stats.get("action_mean_abs", 0.0) or 0.0)
         action_noise_abs = float(rollout_stats.get("action_noise_abs", 0.0) or 0.0)
@@ -549,6 +553,7 @@ class DreamWaQRunner:
                 for key in ("Train/mean_episode_length", "Episode/length", "Episode_Length/episode")
             )
         )
+        mean_reward_per_step = mean_reward / max(mean_length, 1.0) if has_completed_episode else 0.0
         completed_this_call = iteration - learning_start_iteration + 1
         eta = self.tot_time / max(completed_this_call, 1) * max(total_iterations - iteration - 1, 0)
         run_name = self.cfg.run_name or (os.path.basename(self.log_dir) if self.log_dir is not None else "")
@@ -575,6 +580,7 @@ class DreamWaQRunner:
             self.writer.add_scalar("Perf/learning_time", learn_time, iteration)
             self.writer.add_scalar("Rollout/done_rate", done_rate, iteration)
             self.writer.add_scalar("Rollout/timeout_rate", timeout_rate, iteration)
+            self.writer.add_scalar("Rollout/completed_episode_count", completed_episode_count, iteration)
             self.writer.add_scalar("Rollout/action_abs", action_abs, iteration)
             self.writer.add_scalar("Rollout/action_mean_abs", action_mean_abs, iteration)
             self.writer.add_scalar("Rollout/action_noise_abs", action_noise_abs, iteration)
@@ -583,6 +589,7 @@ class DreamWaQRunner:
             if len(rewbuffer) > 0:
                 self.writer.add_scalar("Train/mean_reward", mean_reward, iteration)
                 self.writer.add_scalar("Train/mean_episode_length", mean_length, iteration)
+                self.writer.add_scalar("Train/mean_reward_per_step", mean_reward_per_step, iteration)
             for key, value in episode_metrics.items():
                 self.writer.add_scalar(key, value, iteration)
             for key, value in reward_metrics.items():
@@ -611,9 +618,14 @@ class DreamWaQRunner:
                 self._line("Mean estimator_kl loss", losses["kl"]),
                 self._line("Mean reward", f"{mean_reward:.2f}" if has_completed_episode else "n/a"),
                 self._line("Mean episode length", f"{mean_length:.2f}" if has_completed_episode else "n/a"),
+                self._line(
+                    "Mean reward/step",
+                    f"{mean_reward_per_step:.4f}" if has_completed_episode else "n/a",
+                ),
                 self._line("Mean action std", f"{mean_action_std:.2f}"),
                 self._line("Rollout/done_rate", f"{done_rate:.4f}"),
                 self._line("Rollout/timeout_rate", f"{timeout_rate:.4f}"),
+                self._line("Rollout/completed episodes", str(completed_episode_count)),
                 self._line("Rollout/action |mean|", f"{action_mean_abs:.4f}"),
                 self._line("Rollout/action |sample|", f"{action_abs:.4f}"),
                 self._line("Rollout/action |noise|", f"{action_noise_abs:.4f}"),

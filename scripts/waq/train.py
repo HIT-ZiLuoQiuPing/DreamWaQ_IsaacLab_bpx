@@ -50,6 +50,12 @@ parser.add_argument(
     default=None,
     help="Height scanner update period in control steps. Larger values train faster.",
 )
+parser.add_argument(
+    "--no_random_ep_len",
+    action="store_true",
+    default=False,
+    help="Disable random episode-length initialization at training start.",
+)
 parser.add_argument("--no_console_log", action="store_true", default=False, help="Do not tee stdout/stderr to console.log.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -202,7 +208,7 @@ def main():
         os.path.join(log_dir, "params", os.path.basename(inspect.getfile(env_cfg.__class__))),
     )
 
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=False)
+    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=not args_cli.no_random_ep_len)
     env.close()
 
 

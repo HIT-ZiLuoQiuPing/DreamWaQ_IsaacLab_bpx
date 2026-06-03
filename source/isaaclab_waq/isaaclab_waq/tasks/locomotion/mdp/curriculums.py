@@ -17,24 +17,79 @@ def terrain_levels_vel(
     env_ids: Sequence[int],
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     command_name: str = "base_velocity",
-    promotion_distance_ratio: float = 0.75,
-    demotion_command_ratio: float = 0.5,
+    promotion_distance_ratio: float = 0.85,
+    demotion_command_ratio: float = 0.25,
+    warmup_steps: int = 0,
+    level_step_interval: int = 4096,
+    consecutive_successes: int = 2,
+    demote_only_early_termination: bool = True,
+    min_level_hold_steps: int = 0,
 ) -> torch.Tensor:
-    """Promote terrain level only for episodes that survive to timeout."""
+    """Promote terrain level conservatively after repeated successful timeouts."""
 
     asset = env.scene[asset_cfg.name]
     terrain = env.scene.terrain
     command = env.command_manager.get_command(command_name)
     terrain_generator = terrain.cfg.terrain_generator
+    env_ids = torch.as_tensor(env_ids, device=env.device, dtype=torch.long)
     distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
     promotion_distance = terrain_generator.size[0] * promotion_distance_ratio
 
     timed_out = env.termination_manager.get_term("time_out")[env_ids]
-    move_up = (distance > promotion_distance) & timed_out.bool()
-    move_down = distance < torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s * demotion_command_ratio
+    command_distance = torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s
+    successful = (distance > promotion_distance) & timed_out.bool()
+
+    if not hasattr(env, "_waq_terrain_success_streak"):
+        env._waq_terrain_success_streak = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    if not hasattr(env, "_waq_terrain_last_change_step"):
+        env._waq_terrain_last_change_step = torch.full(
+            (env.num_envs,), -min_level_hold_steps, dtype=torch.long, device=env.device
+        )
+
+    streak = env._waq_terrain_success_streak
+    streak[env_ids] = torch.where(successful, streak[env_ids] + 1, torch.zeros_like(streak[env_ids]))
+
+    step_counter = int(getattr(env, "common_step_counter", 0))
+    if step_counter < warmup_steps:
+        allowed_max_level = 0
+    else:
+        step_interval = max(level_step_interval, 1)
+        allowed_max_level = 1 + (step_counter - warmup_steps) // step_interval
+    max_terrain_level = max(getattr(terrain_generator, "num_rows", 1) - 1, 0)
+    allowed_max_level = int(max(0, min(allowed_max_level, max_terrain_level)))
+
+    current_levels = terrain.terrain_levels[env_ids]
+    can_change = (
+        step_counter - env._waq_terrain_last_change_step[env_ids]
+    ) >= min_level_hold_steps
+    move_up = (
+        (streak[env_ids] >= consecutive_successes)
+        & (current_levels < allowed_max_level)
+        & can_change
+    )
+
+    move_down = distance < command_distance * demotion_command_ratio
+    if demote_only_early_termination:
+        move_down &= ~timed_out.bool()
+    move_down &= current_levels > 0
     move_down &= ~move_up
+    move_down &= can_change
 
     terrain.update_env_origins(env_ids, move_up, move_down)
+    changed_ids = env_ids[move_up | move_down]
+    if changed_ids.numel() > 0:
+        env._waq_terrain_last_change_step[changed_ids] = step_counter
+        streak[changed_ids] = 0
+
+    env._waq_terrain_curriculum_stats = {
+        "allowed_max_level": torch.tensor(float(allowed_max_level), device=env.device),
+        "promotion_distance": torch.tensor(float(promotion_distance), device=env.device),
+        "mean_distance": distance.detach().float().mean(),
+        "success_rate": successful.detach().float().mean(),
+        "move_up_rate": move_up.detach().float().mean(),
+        "move_down_rate": move_down.detach().float().mean(),
+        "success_streak_mean": streak[env_ids].detach().float().mean(),
+    }
     return torch.mean(terrain.terrain_levels.float())
 
 

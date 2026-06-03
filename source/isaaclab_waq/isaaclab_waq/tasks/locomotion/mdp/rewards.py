@@ -302,6 +302,67 @@ def air_time_variance_penalty(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg
     )
 
 
+def feet_gait(
+    env: ManagerBasedRLEnv,
+    period: float,
+    offset: list[float],
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 0.55,
+    command_name: str | None = None,
+) -> torch.Tensor:
+    """Reward feet matching a simple periodic contact schedule."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
+
+    global_phase = ((env.episode_length_buf * env.step_dt) % period / period).unsqueeze(1)
+    leg_phase = torch.cat([(global_phase + offset_) % 1.0 for offset_ in offset], dim=-1)
+
+    reward = torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+    for index in range(len(sensor_cfg.body_ids)):
+        is_stance = leg_phase[:, index] < threshold
+        reward += (~(is_stance ^ is_contact[:, index])).float()
+
+    if command_name is not None:
+        command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+        reward *= command_norm > 0.1
+    return reward
+
+
+def all_feet_air(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Penalize bounding/hopping where every foot is airborne at once."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
+    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    return (~torch.any(is_contact, dim=1)).float() * (command_norm > 0.1).float()
+
+
+def feet_contact_count_error(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    moving_contact_count: float = 2.0,
+    standing_contact_count: float = 4.0,
+) -> torch.Tensor:
+    """Penalize contact patterns far from two-leg trot support while moving."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
+    contact_count = torch.sum(is_contact.float(), dim=1)
+    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    target_count = torch.where(
+        command_norm > 0.1,
+        torch.full_like(contact_count, moving_contact_count),
+        torch.full_like(contact_count, standing_contact_count),
+    )
+    return torch.square(contact_count - target_count)
+
+
 def foot_clearance_reward(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,

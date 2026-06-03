@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import inspect
 import os
 import pathlib
@@ -28,6 +29,16 @@ parser.add_argument("--max_iterations", type=int, default=None, help="Training i
 parser.add_argument("--run_name", type=str, default=None, help="Optional suffix for the log directory.")
 parser.add_argument("--resume", action="store_true", default=False, help="Resume from a WAQ checkpoint.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path to resume from.")
+parser.add_argument("--num_steps_per_env", type=int, default=None, help="Rollout steps per environment per iteration.")
+parser.add_argument("--ppo_epochs", type=int, default=None, help="PPO learning epochs per rollout.")
+parser.add_argument("--height_scan_resolution", type=float, default=None, help="Override height scanner grid resolution.")
+parser.add_argument(
+    "--height_scan_update_stride",
+    type=int,
+    default=None,
+    help="Height scanner update period in control steps. Larger values train faster.",
+)
+parser.add_argument("--no_console_log", action="store_true", default=False, help="Do not tee stdout/stderr to console.log.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -52,6 +63,21 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+class _Tee:
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            stream.write(data)
+            stream.flush()
+        return len(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
 
 
 def _parse_env_cfg(task_name: str, device: str, num_envs: int | None = None, entry_point_key: str = "env_cfg_entry_point"):
@@ -85,8 +111,19 @@ def main():
     agent_cfg = _load_waq_cfg(args_cli.task)
     agent_cfg.max_iterations = args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     agent_cfg.seed = args_cli.seed if args_cli.seed is not None else agent_cfg.seed
+    if args_cli.num_steps_per_env is not None:
+        agent_cfg.num_steps_per_env = args_cli.num_steps_per_env
+    if args_cli.ppo_epochs is not None:
+        agent_cfg.algorithm.num_learning_epochs = args_cli.ppo_epochs
     if args_cli.run_name is not None:
         agent_cfg.run_name = args_cli.run_name
+
+    if args_cli.height_scan_resolution is not None:
+        env_cfg.scene.height_scanner.pattern_cfg.resolution = args_cli.height_scan_resolution
+    if args_cli.height_scan_update_stride is not None:
+        env_cfg.scene.height_scanner.update_period = (
+            args_cli.height_scan_update_stride * env_cfg.decimation * env_cfg.sim.dt
+        )
 
     print(
         "[INFO] BPX IsaacLab bootstrap actuator profile: "
@@ -103,6 +140,23 @@ def main():
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
+    os.makedirs(log_dir, exist_ok=True)
+
+    if not args_cli.no_console_log:
+        console_log_path = os.path.join(log_dir, "console.log")
+        console_log_file = open(console_log_path, "a", buffering=1)
+        stdout = sys.stdout
+        stderr = sys.stderr
+        sys.stdout = _Tee(stdout, console_log_file)
+        sys.stderr = _Tee(stderr, console_log_file)
+
+        def _close_console_log():
+            sys.stdout = stdout
+            sys.stderr = stderr
+            console_log_file.close()
+
+        atexit.register(_close_console_log)
+        print(f"[INFO] Console output is being saved to: {console_log_path}")
 
     env = gym.make(args_cli.task, cfg=env_cfg)
     if isinstance(env.unwrapped, DirectMARLEnv):

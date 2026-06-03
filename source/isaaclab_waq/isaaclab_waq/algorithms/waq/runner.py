@@ -479,6 +479,13 @@ class DreamWaQRunner:
             metrics["Curriculum/terrain_level_mean"] = float(terrain_levels.mean().item())
             metrics["Curriculum/terrain_level_max"] = float(terrain_levels.max().item())
 
+        curriculum_stats = getattr(env, "_waq_terrain_curriculum_stats", None)
+        if isinstance(curriculum_stats, dict):
+            for name, value in curriculum_stats.items():
+                scalar = self._scalar(value)
+                if scalar is not None:
+                    metrics[f"Curriculum/terrain_{name}"] = scalar
+
         command_manager = getattr(env, "command_manager", None)
         if command_manager is not None:
             try:
@@ -630,6 +637,21 @@ class DreamWaQRunner:
                         (
                             f"{curriculum_metrics.get('Curriculum/terrain_level_mean', 0.0):.2f}/"
                             f"{curriculum_metrics.get('Curriculum/terrain_level_max', 0.0):.0f}"
+                        ),
+                    ),
+                    self._line(
+                        "Terrain allowed/up/down",
+                        (
+                            f"{curriculum_metrics.get('Curriculum/terrain_allowed_max_level', 0.0):.0f}/"
+                            f"{curriculum_metrics.get('Curriculum/terrain_move_up_rate', 0.0):.4f}/"
+                            f"{curriculum_metrics.get('Curriculum/terrain_move_down_rate', 0.0):.4f}"
+                        ),
+                    ),
+                    self._line(
+                        "Terrain success/streak",
+                        (
+                            f"{curriculum_metrics.get('Curriculum/terrain_success_rate', 0.0):.4f}/"
+                            f"{curriculum_metrics.get('Curriculum/terrain_success_streak_mean', 0.0):.2f}"
                         ),
                     ),
                     self._line(

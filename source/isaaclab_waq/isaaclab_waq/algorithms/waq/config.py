@@ -25,7 +25,7 @@ class DreamWaQPpoCfg:
     use_clipped_value_loss: bool = True
     clip_param: float = 0.2
     entropy_coef: float = 0.002
-    num_learning_epochs: int = 5
+    num_learning_epochs: int = 4
     num_mini_batches: int = 4
     learning_rate: float = 1.0e-3
     schedule: str = "adaptive"
@@ -40,7 +40,7 @@ class DreamWaQPpoCfg:
 
 @dataclass
 class DreamWaQConfig:
-    num_steps_per_env: int = 16
+    num_steps_per_env: int = 12
     max_iterations: int = 50000
     save_interval: int = 200
     experiment_name: str = "bpx_waq_rough"

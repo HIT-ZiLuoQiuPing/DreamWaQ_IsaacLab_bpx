@@ -589,10 +589,10 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.robot = BPX_PLAY_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.num_envs = 32
         if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.num_rows = 4
-            self.scene.terrain.terrain_generator.num_cols = 2
-            self.scene.terrain.terrain_generator.curriculum = False
-        self.scene.terrain.max_init_terrain_level = None
+            self.scene.terrain.terrain_generator.num_rows = 10
+            self.scene.terrain.terrain_generator.num_cols = 4
+            self.scene.terrain.terrain_generator.curriculum = True
+        self.scene.terrain.max_init_terrain_level = 5
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
         self.observations.policy.enable_corruption = False
         self.observations.cenet.enable_corruption = False

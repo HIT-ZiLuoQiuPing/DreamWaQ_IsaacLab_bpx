@@ -67,7 +67,16 @@ parser.add_argument("--random_commands", action="store_true", default=False, hel
 parser.add_argument("--interactive", action="store_true", default=False, help="Control fixed play commands from the terminal.")
 parser.add_argument("--command_step", type=float, default=0.1, help="Interactive linear command increment.")
 parser.add_argument("--yaw_step", type=float, default=0.1, help="Interactive yaw command increment.")
-parser.add_argument("--terrain_level", type=int, default=None, help="Maximum generated terrain level for play.")
+parser.add_argument(
+    "--terrain_profile",
+    type=str,
+    default="rough",
+    choices=("mixed", "flat", "rough", "slope", "slope_inv", "boxes", "stairs", "stairs_inv"),
+    help="Terrain profile generated for play.",
+)
+parser.add_argument("--terrain_level", type=int, default=5, help="Exact generated terrain level for play.")
+parser.add_argument("--terrain_rows", type=int, default=10, help="Terrain rows generated for play.")
+parser.add_argument("--terrain_cols", type=int, default=4, help="Terrain columns generated for play.")
 parser.add_argument("--follow_camera", action="store_true", default=False, help="Update the camera to follow env 0.")
 parser.add_argument("--camera_distance", type=float, default=3.0, help="Distance used by --follow_camera.")
 AppLauncher.add_app_launcher_args(parser)
@@ -152,7 +161,54 @@ def _groups(extras: dict) -> dict:
     return extras.get("observations", {}) if isinstance(extras, dict) else {}
 
 
-def _set_fixed_command(env, command: tuple[float, float, float]) -> bool:
+_TERRAIN_PROFILE_TO_KEY = {
+    "flat": "flat",
+    "rough": "random_rough",
+    "slope": "hf_pyramid_slope",
+    "slope_inv": "hf_pyramid_slope_inv",
+    "boxes": "boxes",
+    "stairs": "pyramid_stairs",
+    "stairs_inv": "pyramid_stairs_inv",
+}
+
+
+def _configure_play_terrain_cfg(env_cfg, profile: str, rows: int, cols: int):
+    terrain_generator = env_cfg.scene.terrain.terrain_generator
+    if terrain_generator is None:
+        return
+
+    terrain_generator.curriculum = True
+    terrain_generator.num_rows = max(rows, 1)
+    terrain_generator.num_cols = max(cols, 1)
+    if profile != "mixed":
+        terrain_key = _TERRAIN_PROFILE_TO_KEY[profile]
+        terrain_cfg = terrain_generator.sub_terrains[terrain_key]
+        terrain_cfg.proportion = 1.0
+        terrain_generator.sub_terrains = {terrain_key: terrain_cfg}
+
+
+def _force_play_terrain_origin(env, terrain_level: int | None, terrain_col: int = 0) -> bool:
+    terrain = getattr(getattr(env.unwrapped, "scene", None), "terrain", None)
+    terrain_origins = getattr(terrain, "terrain_origins", None)
+    if terrain_origins is None:
+        return False
+
+    max_level = terrain_origins.shape[0] - 1
+    max_col = terrain_origins.shape[1] - 1
+    selected_level = max_level if terrain_level is None else int(_clamp(terrain_level, 0, max_level))
+    selected_col = int(_clamp(terrain_col, 0, max_col))
+
+    terrain.terrain_levels[:] = selected_level
+    terrain.terrain_types[:] = selected_col
+    terrain.env_origins[:] = terrain.terrain_origins[terrain.terrain_levels, terrain.terrain_types]
+    print(
+        f"[INFO] Play terrain origin fixed at level={selected_level}/{max_level}, column={selected_col}/{max_col}.",
+        flush=True,
+    )
+    return True
+
+
+def _set_fixed_command(env, command: tuple[float, float, float] | list[float]) -> bool:
     try:
         command_term = env.unwrapped.command_manager.get_term("base_velocity")
         command_term.vel_command_b[:, 0] = command[0]
@@ -261,8 +317,8 @@ def _update_follow_camera(env, distance: float):
 def main():
     device = args_cli.device if args_cli.device is not None else "cuda:0"
     env_cfg = _parse_env_cfg(args_cli.task, device=device, num_envs=args_cli.num_envs)
-    if args_cli.terrain_level is not None:
-        env_cfg.scene.terrain.max_init_terrain_level = args_cli.terrain_level
+    _configure_play_terrain_cfg(env_cfg, args_cli.terrain_profile, args_cli.terrain_rows, args_cli.terrain_cols)
+    env_cfg.scene.terrain.max_init_terrain_level = args_cli.terrain_level
     agent_cfg = _load_waq_cfg(args_cli.task)
     log_root_path = os.path.abspath(os.path.join("logs", "waq", agent_cfg.experiment_name))
     checkpoint = args_cli.checkpoint or get_checkpoint_path(log_root_path, ".*", "model_.*.pt")
@@ -270,6 +326,8 @@ def main():
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
+    if _force_play_terrain_origin(env, args_cli.terrain_level):
+        env.reset()
     try:
         env.unwrapped.sim.set_camera_view(eye=(2.6, -3.0, 1.4), target=(0.0, 0.0, 0.35))
     except AttributeError:

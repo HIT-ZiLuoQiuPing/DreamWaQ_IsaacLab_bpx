@@ -23,7 +23,9 @@ For faster iteration during reward tuning:
 Interactive play with a fixed terrain cap and follow camera:
 
 ```bash
-./isaaclab_waq.sh --waq-play --task Isaac-BPX-WAQ-Rough-Play-v0 --checkpoint <model.pt> --gui --interactive --follow_camera --terrain_level 5 --command_x 0.6
+./isaaclab_waq.sh --waq-play --task Isaac-BPX-WAQ-Rough-Play-v0 --checkpoint <model.pt> --gui --interactive --follow_camera --terrain_profile rough --terrain_level 5 --command_x 0.6
 ```
 
 During interactive play use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `F` for fast forward, `C` for crawl, `Space` to stop, and `R` to reset to a 0.6 m/s forward command.
+
+Use `--terrain_profile stairs --terrain_level 5` or `--terrain_profile slope --terrain_level 7` to force a specific play terrain instead of randomly landing on flat terrain.

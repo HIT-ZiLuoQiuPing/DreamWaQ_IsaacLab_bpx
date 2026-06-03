@@ -29,6 +29,18 @@ parser.add_argument("--max_iterations", type=int, default=None, help="Training i
 parser.add_argument("--run_name", type=str, default=None, help="Optional suffix for the log directory.")
 parser.add_argument("--resume", action="store_true", default=False, help="Resume from a WAQ checkpoint.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path to resume from.")
+parser.add_argument(
+    "--reset_curriculum_on_resume",
+    action="store_true",
+    default=False,
+    help="Resume model weights but restart command/terrain curricula from the beginning.",
+)
+parser.add_argument(
+    "--curriculum_offset_iterations",
+    type=int,
+    default=None,
+    help="Override command/terrain curriculum progress when resuming, measured in learning iterations.",
+)
 parser.add_argument("--num_steps_per_env", type=int, default=None, help="Rollout steps per environment per iteration.")
 parser.add_argument("--ppo_epochs", type=int, default=None, help="PPO learning epochs per rollout.")
 parser.add_argument("--height_scan_resolution", type=float, default=None, help="Override height scanner grid resolution.")
@@ -169,7 +181,17 @@ def main():
         if checkpoint is None:
             raise FileNotFoundError(f"No WAQ checkpoint found under {log_root_path}.")
         print(f"[INFO] Loading WAQ checkpoint from: {checkpoint}")
-        runner.load(checkpoint)
+        curriculum_step_offset = None
+        if args_cli.reset_curriculum_on_resume:
+            curriculum_step_offset = 0
+        if args_cli.curriculum_offset_iterations is not None:
+            curriculum_step_offset = args_cli.curriculum_offset_iterations * agent_cfg.num_steps_per_env
+        runner.load(checkpoint, curriculum_step_offset=curriculum_step_offset)
+        env_unwrapped = getattr(env, "unwrapped", env)
+        print(
+            "[INFO] WAQ curriculum step offset: "
+            f"{getattr(env_unwrapped, '_waq_curriculum_step_offset', 'default')}"
+        )
 
     os.makedirs(os.path.join(log_dir, "params"), exist_ok=True)
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

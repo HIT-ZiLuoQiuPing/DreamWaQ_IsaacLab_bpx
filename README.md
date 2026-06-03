@@ -33,5 +33,5 @@ Use `--terrain_profile stairs --terrain_level 5` or `--terrain_profile slope --t
 The rough-terrain curriculum starts from easy rows, but the final rows include 12-16 cm stairs, taller boxes, stronger roughness, and steeper slopes. To continue the faster/harder curriculum from a trained checkpoint:
 
 ```bash
-./isaaclab_waq.sh --waq-train --task Isaac-BPX-WAQ-Rough-v0 --num_envs 1024 --resume --checkpoint logs/waq/bpx_waq_rough/2026-06-03_11-20-22/model_15000.pt --max_iterations 25000 --run_name harder_terrain_speedup_from_15000 --headless
+./isaaclab_waq.sh --waq-train --task Isaac-BPX-WAQ-Rough-v0 --num_envs 1024 --resume --reset_curriculum_on_resume --checkpoint logs/waq/bpx_waq_rough/2026-06-03_11-20-22/model_15000.pt --max_iterations 25000 --run_name harder_terrain_speedup_curriculum_reset --headless
 ```

@@ -706,14 +706,16 @@ class DreamWaQRunner:
             path,
         )
 
-    def load(self, path: str, load_optimizer: bool = True):
+    def load(self, path: str, load_optimizer: bool = True, curriculum_step_offset: int | None = None):
         loaded_dict = torch.load(path, map_location=self.device)
         self.policy.load_state_dict(loaded_dict["model_state_dict"])
         if load_optimizer and "optimizer_state_dict" in loaded_dict:
             self.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
         self.current_learning_iteration = loaded_dict.get("iter", 0)
         env = self._unwrap_env()
-        env._waq_curriculum_step_offset = self.current_learning_iteration * self.cfg.num_steps_per_env
+        if curriculum_step_offset is None:
+            curriculum_step_offset = self.current_learning_iteration * self.cfg.num_steps_per_env
+        env._waq_curriculum_step_offset = int(curriculum_step_offset)
         return loaded_dict.get("infos")
 
     def get_inference_policy(self):

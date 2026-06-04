@@ -215,27 +215,6 @@ class ObservationsCfg:
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             clip=(-1.0, 5.0),
         )
-        foot_height = ObsTerm(
-            func=mdp.foot_height_body,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED)},
-            clip=(-2.0, 2.0),
-        )
-        foot_air_time = ObsTerm(
-            func=mdp.foot_air_time,
-            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
-            clip=(0.0, 2.0),
-        )
-        foot_contact = ObsTerm(
-            func=mdp.foot_contact,
-            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
-            clip=(0.0, 1.0),
-        )
-        foot_contact_forces = ObsTerm(
-            func=mdp.foot_contact_forces,
-            scale=0.01,
-            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
-            clip=(-100, 100),
-        )
 
         def __post_init__(self):
             self.concatenate_terms = True
@@ -468,12 +447,14 @@ class CurriculumCfg:
         params={
             "command_name": "base_velocity",
             "promotion_distance_ratio": 0.75,
+            "promotion_command_ratio": 0.60,
             "demotion_command_ratio": 0.5,
+            "minimum_promotion_distance": 3.0,
             "warmup_steps": 0,
-            "level_step_interval": 1,
+            "level_step_interval": 600 * 16,
             "consecutive_successes": 1,
-            "demote_only_early_termination": False,
-            "min_level_hold_steps": 0,
+            "demote_only_early_termination": True,
+            "min_level_hold_steps": 100 * 16,
         },
     )
     command_vel = CurrTerm(

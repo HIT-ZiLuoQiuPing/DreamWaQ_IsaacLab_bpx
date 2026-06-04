@@ -233,3 +233,77 @@ console 中确认：
 - `--reset_policy_std`
 
 这次是继续同一分支，应保留当前 optimizer 和 policy std。
+
+## 2026-06-04 12:23 mjlab_parity_v1 复查
+
+Run：
+
+`logs/waq/bpx_waq_rough/2026-06-04_12-23-27_mjlab_parity_v1`
+
+事件文件：
+
+`events.out.tfevents.1780547014.ubuntu-System-Product-Name.2272110.0`
+
+训练到约 `7315` iteration。尾部 200 个点的核心情况：
+
+| 指标 | 尾部均值 | 判断 |
+| --- | ---: | --- |
+| `Train/mean_reward` | 158.65 | 数值较高，但不能单独说明能过复杂地形 |
+| `Train/mean_episode_length` | 941.05 | 大多数 episode 能跑很久 |
+| `Curriculum/terrain_level_mean` | 1.32 | 平均地形等级仍很低 |
+| `Curriculum/terrain_level_max` | 9.00 | 有环境已经到最高等级 |
+| `Curriculum/terrain_move_up_rate` | 0.147 | 有升级 |
+| `Curriculum/terrain_move_down_rate` | 0.203 | 降级更频繁 |
+| `Curriculum/terrain_mean_distance` | 3.67 | 明显低于固定升级阈值 6m |
+| `Curriculum/terrain_promotion_distance` | 6.00 | 原 mjlab 风格绝对距离阈值过硬 |
+| `Rollout/velocity_x` | 0.272 | 实际前进速度偏低 |
+| `Metrics/base_velocity/error_vel_xy` | 0.297 | 速度误差仍偏大 |
+| `Episode_Termination/base_height` | 0.110 | 仍有约 11% 高度失败 |
+| `Rollout/action_mean_abs` | 4.515 | policy raw mean 远超 `clip_actions=1.0`，动作大量饱和 |
+
+结论：
+
+- 不是“完全不升级”，而是升级后更频繁降级，所以均值卡在约 1.3。
+- 原始 `promotion_distance_ratio=0.75` 对 8m patch 等价于 6m。当前平均速度约 `0.27m/s`，20 秒只能走约 `5.4m`，很难稳定满足 6m timeout。
+- `allowed_max_level=9` 从一开始就完全放开，导致局部环境能冲到高等级，但平均等级随降级逻辑掉回低等级。
+- 当前 CENet estimator target 与 mjlab 不完全一致：mjlab 是 `base_lin_vel + height_scan`，当前版本曾额外加入脚高度、触地和接触力，增加了估计器重构负担。
+
+本次修正：
+
+- estimator target 收窄为 `base_lin_vel + height_scan`，更接近 mjlab 的 DreamWaQ 监督目标。
+- 地形升级增加命令完成率判据：除了绝对 6m，也允许 timeout 且移动距离达到 `0.60 * command_distance`，最低仍需 3m。
+- 地形降级改为只在早退失败时触发，避免“跑满但速度低”的 episode 反复降级。
+- 地形允许等级改为逐步开放：`level_step_interval = 600 * 16`，避免刚开始就允许冲到 9 级。
+- 单个 env 升降级后至少保持 `100 * 16` step，减少等级来回震荡。
+- console/TensorBoard 增加课程诊断：
+  - `terrain_mean_command_distance`
+  - `terrain_distance_success_rate`
+  - `terrain_command_success_rate`
+  - console 中显示 `Terrain dist/cmd_dist` 和 `Terrain abs/cmd success`
+
+训练建议：
+
+- 不建议继续 `2026-06-04_12-23-27_mjlab_parity_v1` 的旧 checkpoint，因为 estimator 维度已经从 `62` 改成 `38`，checkpoint 和新网络结构不匹配。
+- 这次改动后应从头训练，或至少从结构匹配的新 checkpoint 开始。
+
+建议短测：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --num_envs 256 \
+  --max_iterations 1000 \
+  --run_name terrain_curriculum_fix_smoke \
+  --headless
+```
+
+正式训练：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --num_envs 1024 \
+  --max_iterations 50000 \
+  --run_name terrain_curriculum_fix_v1 \
+  --headless
+```

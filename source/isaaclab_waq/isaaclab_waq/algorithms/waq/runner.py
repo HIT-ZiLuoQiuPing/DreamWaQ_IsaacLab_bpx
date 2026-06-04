@@ -667,6 +667,20 @@ class DreamWaQRunner:
                         ),
                     ),
                     self._line(
+                        "Terrain dist/cmd_dist",
+                        (
+                            f"{curriculum_metrics.get('Curriculum/terrain_mean_distance', 0.0):.2f}/"
+                            f"{curriculum_metrics.get('Curriculum/terrain_mean_command_distance', 0.0):.2f}"
+                        ),
+                    ),
+                    self._line(
+                        "Terrain abs/cmd success",
+                        (
+                            f"{curriculum_metrics.get('Curriculum/terrain_distance_success_rate', 0.0):.4f}/"
+                            f"{curriculum_metrics.get('Curriculum/terrain_command_success_rate', 0.0):.4f}"
+                        ),
+                    ),
+                    self._line(
                         "Command lin x range",
                         (
                             f"[{curriculum_metrics.get('Curriculum/lin_vel_x_min', 0.0):.2f}, "

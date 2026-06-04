@@ -24,7 +24,9 @@ def terrain_levels_vel(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     command_name: str = "base_velocity",
     promotion_distance_ratio: float = 0.85,
+    promotion_command_ratio: float | None = None,
     demotion_command_ratio: float = 0.25,
+    minimum_promotion_distance: float = 0.0,
     warmup_steps: int = 0,
     level_step_interval: int = 4096,
     consecutive_successes: int = 2,
@@ -43,7 +45,13 @@ def terrain_levels_vel(
 
     timed_out = env.termination_manager.get_term("time_out")[env_ids]
     command_distance = torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s
-    successful = (distance > promotion_distance) & timed_out.bool()
+    distance_success = distance > promotion_distance
+    if promotion_command_ratio is None:
+        command_success = torch.zeros_like(distance_success)
+    else:
+        command_target = torch.clamp(command_distance * promotion_command_ratio, min=minimum_promotion_distance)
+        command_success = distance > command_target
+    successful = (distance_success | command_success) & timed_out.bool()
 
     if not hasattr(env, "_waq_terrain_success_streak"):
         env._waq_terrain_success_streak = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
@@ -91,6 +99,9 @@ def terrain_levels_vel(
         "allowed_max_level": torch.tensor(float(allowed_max_level), device=env.device),
         "promotion_distance": torch.tensor(float(promotion_distance), device=env.device),
         "mean_distance": distance.detach().float().mean(),
+        "mean_command_distance": command_distance.detach().float().mean(),
+        "distance_success_rate": distance_success.detach().float().mean(),
+        "command_success_rate": command_success.detach().float().mean(),
         "success_rate": successful.detach().float().mean(),
         "move_up_rate": move_up.detach().float().mean(),
         "move_down_rate": move_down.detach().float().mean(),

@@ -7,9 +7,9 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class DreamWaQPolicyCfg:
-    init_noise_std: float = 0.55
-    min_noise_std: float = 0.15
-    max_noise_std: float = 0.55
+    init_noise_std: float = 0.65
+    min_noise_std: float = 0.18
+    max_noise_std: float = 0.65
     actor_hidden_dims: list[int] = field(default_factory=lambda: [512, 256, 128])
     critic_hidden_dims: list[int] = field(default_factory=lambda: [512, 256, 128])
     encoder_hidden_dims: list[int] = field(default_factory=lambda: [512, 256])
@@ -24,14 +24,14 @@ class DreamWaQPpoCfg:
     value_loss_coef: float = 1.0
     use_clipped_value_loss: bool = True
     clip_param: float = 0.2
-    entropy_coef: float = 0.002
+    entropy_coef: float = 0.006
     num_learning_epochs: int = 4
     num_mini_batches: int = 4
     learning_rate: float = 1.0e-3
     schedule: str = "adaptive"
     gamma: float = 0.99
     lam: float = 0.95
-    desired_kl: float | None = 0.01
+    desired_kl: float | None = 0.02
     max_grad_norm: float = 1.0
     estimator_loss_coef: float = 1.0
     reconstruction_loss_coef: float = 0.2

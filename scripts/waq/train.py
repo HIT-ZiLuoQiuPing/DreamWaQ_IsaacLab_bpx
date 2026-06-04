@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import inspect
+import math
 import os
 import pathlib
 import shutil
@@ -29,6 +30,18 @@ parser.add_argument("--max_iterations", type=int, default=None, help="Training i
 parser.add_argument("--run_name", type=str, default=None, help="Optional suffix for the log directory.")
 parser.add_argument("--resume", action="store_true", default=False, help="Resume from a WAQ checkpoint.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path to resume from.")
+parser.add_argument(
+    "--no_load_optimizer",
+    action="store_true",
+    default=False,
+    help="Resume policy weights without restoring the old optimizer state.",
+)
+parser.add_argument(
+    "--reset_policy_std",
+    action="store_true",
+    default=False,
+    help="Reset the loaded policy action standard deviation to the current config value.",
+)
 parser.add_argument(
     "--reset_curriculum_on_resume",
     action="store_true",
@@ -192,7 +205,16 @@ def main():
             curriculum_step_offset = 0
         if args_cli.curriculum_offset_iterations is not None:
             curriculum_step_offset = args_cli.curriculum_offset_iterations * agent_cfg.num_steps_per_env
-        runner.load(checkpoint, curriculum_step_offset=curriculum_step_offset)
+        runner.load(
+            checkpoint,
+            load_optimizer=not args_cli.no_load_optimizer,
+            curriculum_step_offset=curriculum_step_offset,
+        )
+        if args_cli.reset_policy_std:
+            with torch.no_grad():
+                runner.policy.log_std.fill_(math.log(agent_cfg.policy.init_noise_std))
+                runner.policy.clamp_action_std()
+            print(f"[INFO] Reset policy action std to: {agent_cfg.policy.init_noise_std:.3f}")
         env_unwrapped = getattr(env, "unwrapped", env)
         print(
             "[INFO] WAQ curriculum step offset: "

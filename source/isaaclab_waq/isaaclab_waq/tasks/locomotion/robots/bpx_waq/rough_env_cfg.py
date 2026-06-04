@@ -26,7 +26,7 @@ from isaaclab_waq.assets.robots.bpx import (
     BPX_CFG,
     BPX_PLAY_CFG,
     CONTROLLED_JOINT_NAMES,
-    FEET_BODY_NAMES,
+    FEET_BODY_NAMES_ORDERED,
     UNDESIRED_BODY_NAMES,
 )
 from isaaclab_waq.tasks.locomotion import mdp
@@ -390,22 +390,22 @@ class RewardsCfg:
         func=mdp.feet_air_time,
         weight=0.05,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
             "command_name": "base_velocity",
             "threshold": 0.25,
         },
     )
     air_time_variance = RewTerm(
         func=mdp.air_time_variance_penalty,
-        weight=-0.25,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES)},
+        weight=0.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
     )
     feet_slide = RewTerm(
         func=mdp.feet_slide,
         weight=-0.05,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
     feet_clearance = RewTerm(
@@ -416,18 +416,23 @@ class RewardsCfg:
             "tanh_mult": 2.0,
             "target_height": 0.10,
             "command_name": "base_velocity",
-            "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
-    feet_gait = RewTerm(
-        func=mdp.feet_gait,
-        weight=0.18,
+    diagonal_trot_contact = RewTerm(
+        func=mdp.diagonal_trot_contact_reward,
+        weight=0.16,
         params={
-            "period": 0.50,
-            "offset": [0.0, 0.5, 0.5, 0.0],
-            "threshold": 0.55,
             "command_name": "base_velocity",
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
+        },
+    )
+    bad_two_foot_contact = RewTerm(
+        func=mdp.bad_two_foot_contact_pattern,
+        weight=-0.35,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
     all_feet_air = RewTerm(
@@ -435,7 +440,7 @@ class RewardsCfg:
         weight=-2.0,
         params={
             "command_name": "base_velocity",
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
     feet_contact_count = RewTerm(
@@ -445,13 +450,13 @@ class RewardsCfg:
             "command_name": "base_velocity",
             "moving_contact_count": 2.0,
             "standing_contact_count": 4.0,
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
     feet_stumble = RewTerm(
         func=mdp.feet_stumble,
         weight=-0.2,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES)},
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
     )
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,

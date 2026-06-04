@@ -13,6 +13,7 @@ BPX_PLAY_USD_PATH = _REPO_ROOT / "assets" / "BPX" / "usd" / "bpx_play.usda"
 
 BASE_BODY_NAME = "torso"
 FEET_BODY_NAMES = ".*_toe_link"
+FEET_BODY_NAMES_ORDERED = ["fl_toe_link", "fr_toe_link", "hl_toe_link", "hr_toe_link"]
 UNDESIRED_BODY_NAMES = [".*_hip_link", ".*_thigh_link", ".*_calf_link"]
 CONTROLLED_JOINT_NAMES = [".*_hip_roll_joint", ".*_hip_pitch_joint", ".*_knee_joint"]
 

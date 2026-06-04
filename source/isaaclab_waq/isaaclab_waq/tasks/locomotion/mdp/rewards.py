@@ -363,6 +363,52 @@ def feet_contact_count_error(
     return torch.square(contact_count - target_count)
 
 
+def diagonal_trot_contact_reward(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Reward phase-free diagonal two-foot support while moving.
+
+    The foot order is expected to be FL, FR, HL, HR. This avoids tying the policy
+    to an unobserved episode-time clock while still preferring trot-like contacts.
+    """
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
+    if is_contact.shape[1] != 4:
+        return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+
+    fl, fr, hl, hr = [is_contact[:, index] for index in range(4)]
+    diagonal_support = torch.logical_or(fl & hr & ~fr & ~hl, fr & hl & ~fl & ~hr)
+    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    return diagonal_support.float() * (command_norm > 0.1).float()
+
+
+def bad_two_foot_contact_pattern(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Penalize two-foot support patterns that look like bounding or pacing."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
+    if is_contact.shape[1] != 4:
+        return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+
+    fl, fr, hl, hr = [is_contact[:, index] for index in range(4)]
+    contact_count = torch.sum(is_contact.float(), dim=1)
+    two_feet = contact_count == 2.0
+    front_pair = fl & fr
+    hind_pair = hl & hr
+    left_pair = fl & hl
+    right_pair = fr & hr
+    bad_pair = front_pair | hind_pair | left_pair | right_pair
+    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    return (two_feet & bad_pair).float() * (command_norm > 0.1).float()
+
+
 def foot_clearance_reward(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,

@@ -242,14 +242,7 @@ class DreamWaQRunner:
             self.storage.clear()
 
             self.current_learning_iteration = iteration + 1
-            self.tot_timesteps += self.cfg.num_steps_per_env * self.env.num_envs
-            self.tot_time += collection_time + learn_time
-            log_interval = max(int(getattr(self.cfg, "log_interval", 1)), 1)
-            should_log = (
-                self.log_dir is not None
-                and ((iteration - learning_start_iteration) % log_interval == 0 or iteration == total_iterations - 1)
-            )
-            if should_log:
+            if self.log_dir is not None:
                 self._log(
                     iteration,
                     total_iterations,
@@ -525,6 +518,8 @@ class DreamWaQRunner:
         rewbuffer: deque[float],
         lenbuffer: deque[float],
     ):
+        self.tot_timesteps += self.cfg.num_steps_per_env * self.env.num_envs
+        self.tot_time += collection_time + learn_time
         fps = int(self.cfg.num_steps_per_env * self.env.num_envs / (collection_time + learn_time))
         episode_metrics = self._mean_episode_infos(ep_infos)
         rollout_stats = self._last_rollout_stats

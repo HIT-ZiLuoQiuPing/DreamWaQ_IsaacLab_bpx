@@ -194,7 +194,7 @@ class DreamWaQActorCritic(nn.Module):
     def update_distribution(self, observations: torch.Tensor, history: torch.Tensor, sample_context: bool = True):
         observations = self.actor_obs_normalizer(observations)
         context = self.cenet_forward(history, sample=sample_context)["context"]
-        mean = torch.tanh(self.actor(torch.cat((observations, context), dim=-1)))
+        mean = self.actor(torch.cat((observations, context), dim=-1))
         std = torch.exp(self.log_std).expand_as(mean)
         self.distribution = Normal(mean, std)
 
@@ -212,7 +212,7 @@ class DreamWaQActorCritic(nn.Module):
     def act_inference(self, observations: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
         observations = self.actor_obs_normalizer(observations)
         context = self.cenet_forward(history, sample=False)["context"]
-        return torch.tanh(self.actor(torch.cat((observations, context), dim=-1)))
+        return self.actor(torch.cat((observations, context), dim=-1))
 
     def evaluate(self, critic_observations: torch.Tensor, **kwargs) -> torch.Tensor:
         return self.critic(self.critic_obs_normalizer(critic_observations))

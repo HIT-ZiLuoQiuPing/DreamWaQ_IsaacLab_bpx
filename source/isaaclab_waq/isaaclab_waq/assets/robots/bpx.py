@@ -17,30 +17,24 @@ FEET_BODY_NAMES_ORDERED = ["fl_toe_link", "fr_toe_link", "hl_toe_link", "hr_toe_
 UNDESIRED_BODY_NAMES = [".*_hip_link", ".*_thigh_link", ".*_calf_link"]
 CONTROLLED_JOINT_NAMES = [".*_hip_roll_joint", ".*_hip_pitch_joint", ".*_knee_joint"]
 
-BPX_EFFORT_LIMIT = 140.0
+BPX_EFFORT_LIMIT = 30.0
 BPX_ARMATURE = 0.005
-BPX_STIFFNESS = 48.0
-BPX_DAMPING = 2.2
-BPX_DEFAULT_BASE_HEIGHT = 0.45
+BPX_NATURAL_FREQUENCY = 10.0 * 2.0 * 3.1415926535
+BPX_DAMPING_RATIO = 2.0
+BPX_STIFFNESS = BPX_ARMATURE * BPX_NATURAL_FREQUENCY**2
+BPX_DAMPING = 2.0 * BPX_DAMPING_RATIO * BPX_ARMATURE * BPX_NATURAL_FREQUENCY
+BPX_DEFAULT_BASE_HEIGHT = 0.42
+BPX_DEFAULT_ACTION_SCALE = 0.25 * BPX_EFFORT_LIMIT / BPX_STIFFNESS
 BPX_ACTION_SCALE = {
-    ".*_hip_roll_joint": 0.20,
-    ".*_hip_pitch_joint": 0.20,
-    ".*_knee_joint": 0.20,
+    ".*_hip_roll_joint": BPX_DEFAULT_ACTION_SCALE,
+    ".*_hip_pitch_joint": BPX_DEFAULT_ACTION_SCALE,
+    ".*_knee_joint": BPX_DEFAULT_ACTION_SCALE,
 }
 
 BPX_STAND_JOINT_POS = {
-    "fl_hip_roll_joint": 0.10,
-    "fr_hip_roll_joint": -0.10,
-    "hl_hip_roll_joint": 0.10,
-    "hr_hip_roll_joint": -0.10,
-    "fl_hip_pitch_joint": 0.80,
-    "fr_hip_pitch_joint": 0.80,
-    "hl_hip_pitch_joint": 0.80,
-    "hr_hip_pitch_joint": 0.80,
-    "fl_knee_joint": -1.50,
-    "fr_knee_joint": -1.50,
-    "hl_knee_joint": -1.50,
-    "hr_knee_joint": -1.50,
+    ".*_hip_roll_joint": 0.0,
+    ".*_hip_pitch_joint": 0.60,
+    ".*_knee_joint": -1.20,
 }
 
 BPX_JOINT_ORDER = [

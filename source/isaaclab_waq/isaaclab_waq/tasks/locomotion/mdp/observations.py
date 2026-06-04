@@ -8,6 +8,7 @@ import torch
 
 from isaaclab.assets import RigidObject
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.sensors import ContactSensor
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -25,3 +26,33 @@ def base_link_ang_vel(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEnt
 
     asset: RigidObject = env.scene[asset_cfg.name]
     return asset.data.root_link_ang_vel_b
+
+
+def foot_height_body(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Foot heights relative to the root body height."""
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    root_z = asset.data.root_pos_w[:, 2].unsqueeze(-1)
+    return foot_z - root_z
+
+
+def foot_air_time(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Current air time for each foot."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    return contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+
+
+def foot_contact(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Binary foot contact state."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    return (contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0).float()
+
+
+def foot_contact_forces(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Net contact forces for each foot in world frame."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    return contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :].flatten(start_dim=1)

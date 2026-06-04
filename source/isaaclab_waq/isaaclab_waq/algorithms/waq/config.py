@@ -7,9 +7,9 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class DreamWaQPolicyCfg:
-    init_noise_std: float = 0.65
-    min_noise_std: float = 0.18
-    max_noise_std: float = 0.65
+    init_noise_std: float = 1.0
+    min_noise_std: float = 0.20
+    max_noise_std: float = 1.0
     actor_hidden_dims: list[int] = field(default_factory=lambda: [512, 256, 128])
     critic_hidden_dims: list[int] = field(default_factory=lambda: [512, 256, 128])
     encoder_hidden_dims: list[int] = field(default_factory=lambda: [512, 256])
@@ -24,14 +24,14 @@ class DreamWaQPpoCfg:
     value_loss_coef: float = 1.0
     use_clipped_value_loss: bool = True
     clip_param: float = 0.2
-    entropy_coef: float = 0.006
-    num_learning_epochs: int = 4
+    entropy_coef: float = 0.01
+    num_learning_epochs: int = 5
     num_mini_batches: int = 4
     learning_rate: float = 1.0e-3
     schedule: str = "adaptive"
     gamma: float = 0.99
     lam: float = 0.95
-    desired_kl: float | None = 0.02
+    desired_kl: float | None = 0.01
     max_grad_norm: float = 1.0
     estimator_loss_coef: float = 1.0
     reconstruction_loss_coef: float = 0.2
@@ -40,7 +40,7 @@ class DreamWaQPpoCfg:
 
 @dataclass
 class DreamWaQConfig:
-    num_steps_per_env: int = 12
+    num_steps_per_env: int = 16
     max_iterations: int = 50000
     save_interval: int = 200
     experiment_name: str = "bpx_waq_rough"

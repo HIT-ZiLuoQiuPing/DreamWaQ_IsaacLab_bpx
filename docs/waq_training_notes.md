@@ -307,3 +307,82 @@ Run：
   --run_name terrain_curriculum_fix_v1 \
   --headless
 ```
+
+## 2026-06-04 训练速度优化
+
+现象：
+
+- `mjlab_parity_v1` 尾部单轮约 `1.55-1.65s`。
+- 其中 collection time 约 `1.45-1.57s`，learning time 约 `0.10s`。
+- 因此瓶颈主要是 IsaacLab/PhysX 仿真采样，不是 PPO 网络更新。
+- `50000 * 1.6s` 约等于 `22.2h`，一天量级是合理估算。
+
+本次新增：
+
+- `--speed_preset none|fast|turbo`
+- `--log_interval`
+- `--save_interval`
+- `--num_mini_batches`
+
+默认配置不变；只有显式指定 preset 才生效。
+
+`fast` preset：
+
+- `num_envs=1536`
+- `max_iterations=25000`
+- `num_steps_per_env=32`
+- `ppo_epochs=3`
+- `num_mini_batches=6`
+- `height_scan_resolution=0.25`
+- `height_scan_update_stride=4`
+- `save_interval=500`
+- `log_interval=10`
+
+`turbo` preset：
+
+- `num_envs=2048`
+- `max_iterations=15000`
+- `num_steps_per_env=32`
+- `ppo_epochs=2`
+- `num_mini_batches=8`
+- `height_scan_resolution=0.30`
+- `height_scan_update_stride=6`
+- `save_interval=1000`
+- `log_interval=20`
+
+推荐先用 fast：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --speed_preset fast \
+  --run_name terrain_curriculum_fix_fast_v1 \
+  --headless
+```
+
+如果 8GB 显存下 `1536` env OOM，就手动降回 `1024`：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --speed_preset fast \
+  --num_envs 1024 \
+  --run_name terrain_curriculum_fix_fast_1024_v1 \
+  --headless
+```
+
+只追求速度、愿意承担质量风险时再试 turbo：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --speed_preset turbo \
+  --run_name terrain_curriculum_fix_turbo_v1 \
+  --headless
+```
+
+注意：
+
+- `fast/turbo` 会改变 rollout 长度、height scan 分辨率和 CENet 输入维度，因此不要接旧 checkpoint。
+- 如果要严格和 mjlab parity 对比，用默认配置；如果要尽快找可用策略，用 `fast`。
+- `turbo` 更可能牺牲地形感知精度和 PPO 稳定性，只适合做快速筛选。

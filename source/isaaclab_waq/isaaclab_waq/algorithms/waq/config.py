@@ -43,6 +43,7 @@ class DreamWaQConfig:
     num_steps_per_env: int = 16
     max_iterations: int = 50000
     save_interval: int = 200
+    log_interval: int = 1
     experiment_name: str = "bpx_waq_rough"
     run_name: str = ""
     seed: int = 42

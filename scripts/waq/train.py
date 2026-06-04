@@ -56,6 +56,15 @@ parser.add_argument(
 )
 parser.add_argument("--num_steps_per_env", type=int, default=None, help="Rollout steps per environment per iteration.")
 parser.add_argument("--ppo_epochs", type=int, default=None, help="PPO learning epochs per rollout.")
+parser.add_argument("--num_mini_batches", type=int, default=None, help="PPO mini-batches per epoch.")
+parser.add_argument("--save_interval", type=int, default=None, help="Checkpoint save interval in learning iterations.")
+parser.add_argument("--log_interval", type=int, default=None, help="Console/TensorBoard logging interval in iterations.")
+parser.add_argument(
+    "--speed_preset",
+    choices=("none", "fast", "turbo"),
+    default="none",
+    help="Apply a training-throughput preset. Explicit CLI overrides still take priority.",
+)
 parser.add_argument("--height_scan_resolution", type=float, default=None, help="Override height scanner grid resolution.")
 parser.add_argument(
     "--height_scan_update_stride",
@@ -128,6 +137,59 @@ def _load_waq_cfg(task_name: str) -> DreamWaQConfig:
     return cfg
 
 
+def _apply_speed_preset(env_cfg, agent_cfg: DreamWaQConfig, preset: str):
+    if preset == "none":
+        return
+
+    if preset == "fast":
+        defaults = {
+            "num_envs": 1536,
+            "max_iterations": 25000,
+            "num_steps_per_env": 32,
+            "ppo_epochs": 3,
+            "num_mini_batches": 6,
+            "height_scan_resolution": 0.25,
+            "height_scan_update_stride": 4,
+            "save_interval": 500,
+            "log_interval": 10,
+        }
+    elif preset == "turbo":
+        defaults = {
+            "num_envs": 2048,
+            "max_iterations": 15000,
+            "num_steps_per_env": 32,
+            "ppo_epochs": 2,
+            "num_mini_batches": 8,
+            "height_scan_resolution": 0.30,
+            "height_scan_update_stride": 6,
+            "save_interval": 1000,
+            "log_interval": 20,
+        }
+    else:
+        raise ValueError(f"Unsupported speed preset: {preset}")
+
+    if args_cli.num_envs is None:
+        env_cfg.scene.num_envs = defaults["num_envs"]
+    if args_cli.max_iterations is None:
+        agent_cfg.max_iterations = defaults["max_iterations"]
+    if args_cli.num_steps_per_env is None:
+        agent_cfg.num_steps_per_env = defaults["num_steps_per_env"]
+    if args_cli.ppo_epochs is None:
+        agent_cfg.algorithm.num_learning_epochs = defaults["ppo_epochs"]
+    if args_cli.num_mini_batches is None:
+        agent_cfg.algorithm.num_mini_batches = defaults["num_mini_batches"]
+    if args_cli.save_interval is None:
+        agent_cfg.save_interval = defaults["save_interval"]
+    if args_cli.log_interval is None:
+        agent_cfg.log_interval = defaults["log_interval"]
+    if args_cli.height_scan_resolution is None:
+        env_cfg.scene.height_scanner.pattern_cfg.resolution = defaults["height_scan_resolution"]
+    if args_cli.height_scan_update_stride is None:
+        env_cfg.scene.height_scanner.update_period = (
+            defaults["height_scan_update_stride"] * env_cfg.decimation * env_cfg.sim.dt
+        )
+
+
 def _latest_checkpoint(log_root_path: str) -> str | None:
     log_root = pathlib.Path(log_root_path)
     if not log_root.exists():
@@ -140,12 +202,19 @@ def main():
     device = args_cli.device if args_cli.device is not None else "cuda:0"
     env_cfg = _parse_env_cfg(args_cli.task, device=device, num_envs=args_cli.num_envs)
     agent_cfg = _load_waq_cfg(args_cli.task)
+    _apply_speed_preset(env_cfg, agent_cfg, args_cli.speed_preset)
     agent_cfg.max_iterations = args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     agent_cfg.seed = args_cli.seed if args_cli.seed is not None else agent_cfg.seed
     if args_cli.num_steps_per_env is not None:
         agent_cfg.num_steps_per_env = args_cli.num_steps_per_env
     if args_cli.ppo_epochs is not None:
         agent_cfg.algorithm.num_learning_epochs = args_cli.ppo_epochs
+    if args_cli.num_mini_batches is not None:
+        agent_cfg.algorithm.num_mini_batches = args_cli.num_mini_batches
+    if args_cli.save_interval is not None:
+        agent_cfg.save_interval = args_cli.save_interval
+    if args_cli.log_interval is not None:
+        agent_cfg.log_interval = args_cli.log_interval
     if args_cli.run_name is not None:
         agent_cfg.run_name = args_cli.run_name
 
@@ -160,6 +229,16 @@ def main():
         "[INFO] BPX IsaacLab bootstrap actuator profile: "
         f"effort={BPX_EFFORT_LIMIT:.2f}, stiffness={BPX_STIFFNESS:.2f}, "
         f"damping={BPX_DAMPING:.2f}, action_scale={next(iter(BPX_ACTION_SCALE.values())):.3f}"
+    )
+    print(
+        "[INFO] WAQ training config: "
+        f"speed_preset={args_cli.speed_preset}, num_envs={env_cfg.scene.num_envs}, "
+        f"num_steps_per_env={agent_cfg.num_steps_per_env}, max_iterations={agent_cfg.max_iterations}, "
+        f"ppo_epochs={agent_cfg.algorithm.num_learning_epochs}, "
+        f"num_mini_batches={agent_cfg.algorithm.num_mini_batches}, "
+        f"log_interval={agent_cfg.log_interval}, save_interval={agent_cfg.save_interval}, "
+        f"height_scan_resolution={env_cfg.scene.height_scanner.pattern_cfg.resolution}, "
+        f"height_scan_update_period={env_cfg.scene.height_scanner.update_period}"
     )
 
     env_cfg.seed = agent_cfg.seed

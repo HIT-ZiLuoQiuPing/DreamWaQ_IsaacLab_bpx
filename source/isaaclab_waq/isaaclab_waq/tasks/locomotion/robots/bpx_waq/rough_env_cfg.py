@@ -31,6 +31,10 @@ from isaaclab_waq.assets.robots.bpx import (
 from isaaclab_waq.tasks.locomotion import mdp
 
 
+HIND_FEET_BODY_NAMES = ["hl_toe_link", "hr_toe_link"]
+HIND_CALF_BODY_NAMES = ["hl_calf_link", "hr_calf_link"]
+
+
 BPX_ROUGH_TERRAINS_CFG = terrain_gen.TerrainGeneratorCfg(
     size=(8.0, 8.0),
     border_width=20.0,
@@ -475,6 +479,17 @@ class RewardsCfg:
             "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
+    hind_feet_swing_height = RewTerm(
+        func=mdp.feet_swing_height_terrain_l2,
+        weight=-0.18,
+        params={
+            "target_height": 0.14,
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=HIND_FEET_BODY_NAMES),
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+            "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=HIND_FEET_BODY_NAMES),
+        },
+    )
     diagonal_trot_contact = None
     bad_two_foot_contact = None
     all_feet_air = None
@@ -486,10 +501,18 @@ class RewardsCfg:
     )
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-0.1,
+        weight=-0.15,
         params={
             "threshold": 1.0,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_calf_link"),
+        },
+    )
+    hind_calf_contacts = RewTerm(
+        func=mdp.undesired_contacts,
+        weight=-0.55,
+        params={
+            "threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=HIND_CALF_BODY_NAMES),
         },
     )
     termination = RewTerm(func=mdp.is_terminated, weight=-25.0)

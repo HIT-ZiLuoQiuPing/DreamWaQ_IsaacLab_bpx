@@ -429,3 +429,23 @@ Run：
   --run_name terrain_curriculum_fix_v1 \
   --headless
 ```
+
+## 2026-06-05 hind calf drag fix
+
+现象：
+
+- `mjlab_parity_footobs_v1_smoke` 已经出现可用步态，并且能跨较高台阶。
+- 真实 play 中两条后腿仍有明显拖地，后小腿/膝部会触碰地面。
+
+本次只做局部 reward 调整，不改命令、地形、观测维度、网络结构或 PPO：
+
+- 保留全体 calf 触地惩罚，并将 `undesired_contacts` 权重从 `-0.10` 小幅提高到 `-0.15`。
+- 新增 `hind_calf_contacts`，只惩罚 `hl_calf_link` 和 `hr_calf_link` 触地，权重 `-0.55`。
+- 新增 `hind_feet_swing_height`，只对后脚摆动高度给轻微约束：
+  - target height `0.14m`
+  - weight `-0.18`
+
+训练建议：
+
+- 这次没有改 observation/model shape，可以从 `mjlab_parity_footobs_v1_smoke` 的 checkpoint 分支继续训。
+- 建议先从最近 checkpoint 分支续训 1000-3000 轮观察 play，不建议从 0 重训。

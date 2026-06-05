@@ -15,8 +15,6 @@ from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 
-from isaaclab_waq.assets.robots.bpx import BPX_JOINT_ORDER
-
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -252,38 +250,6 @@ def forward_yaw_drift(
         & (torch.abs(command[:, 2]) < yaw_command_threshold)
     )
     return torch.square(asset.data.root_link_ang_vel_b[:, 2]) * straight.float()
-
-
-def leg_symmetry(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    min_forward_command: float = 0.2,
-    lateral_command_threshold: float = 0.08,
-    yaw_command_threshold: float = 0.08,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Encourage left/right leg symmetry while walking straight."""
-
-    asset: Articulation = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-    straight = (
-        (command[:, 0] > min_forward_command)
-        & (torch.abs(command[:, 1]) < lateral_command_threshold)
-        & (torch.abs(command[:, 2]) < yaw_command_threshold)
-    )
-    try:
-        ids = [asset.joint_names.index(name) for name in BPX_JOINT_ORDER]
-    except ValueError:
-        return torch.zeros(env.num_envs, device=env.device)
-
-    q = asset.data.joint_pos[:, ids]
-    front_roll = torch.square(q[:, 0] + q[:, 3])
-    hind_roll = torch.square(q[:, 6] + q[:, 9])
-    front_pitch = torch.square(q[:, 1] - q[:, 4])
-    hind_pitch = torch.square(q[:, 7] - q[:, 10])
-    front_knee = torch.square(q[:, 2] - q[:, 5])
-    hind_knee = torch.square(q[:, 8] - q[:, 11])
-    return (front_roll + hind_roll + front_pitch + hind_pitch + front_knee + hind_knee) * straight.float()
 
 
 def joint_position_penalty(

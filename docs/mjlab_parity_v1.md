@@ -107,7 +107,6 @@ IsaacLab 已回退到更接近 mjlab 的结构：
 - `track_yaw_velocity_fine`: weight `1.4`, std `0.25`
 - `forward_lateral_drift`: weight `-1.5`
 - `forward_yaw_drift`: weight `-1.2`
-- `leg_symmetry`: weight `-0.25`
 - `ang_vel_xy`: weight `-0.05`
 - `action_rate`: weight `-0.12`
 - `feet_air_time`: weight `0.2`

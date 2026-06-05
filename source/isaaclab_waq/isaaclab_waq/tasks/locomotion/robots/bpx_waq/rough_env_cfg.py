@@ -418,8 +418,6 @@ class RewardsCfg:
         weight=-1.2,
         params={"command_name": "base_velocity"},
     )
-    leg_symmetry = None
-
     lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.5)

@@ -37,22 +37,6 @@ BPX_STAND_JOINT_POS = {
     ".*_knee_joint": -1.20,
 }
 
-BPX_JOINT_ORDER = [
-    "fl_hip_roll_joint",
-    "fl_hip_pitch_joint",
-    "fl_knee_joint",
-    "fr_hip_roll_joint",
-    "fr_hip_pitch_joint",
-    "fr_knee_joint",
-    "hl_hip_roll_joint",
-    "hl_hip_pitch_joint",
-    "hl_knee_joint",
-    "hr_hip_roll_joint",
-    "hr_hip_pitch_joint",
-    "hr_knee_joint",
-]
-
-
 def _make_bpx_cfg(usd_path: Path) -> ArticulationCfg:
     return ArticulationCfg(
         spawn=sim_utils.UsdFileCfg(

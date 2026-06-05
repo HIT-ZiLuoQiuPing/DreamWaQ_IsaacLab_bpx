@@ -46,13 +46,13 @@
 
 ## 关于小跳步态
 
-当前判断：`leg_symmetry` 不太像主因，但它也不能完全排除。
+当前判断：早期的左右镜像姿态约束不是严格的 trot 相位约束，不能直接解决前后脚同步或后腿拖行问题。
 
 原因：
 
-- `leg_symmetry` 的贡献尾部均值约 `-0.00046`，数值非常小。
-- mjlab 里也有类似 `leg_symmetry`，权重同样是 `-0.25`，但 mjlab 效果更好。
-- 这个项约束的是左右镜像，例如左前和右前、左后和右后，不直接要求前后脚同步。
+- 该项只约束左右镜像，例如左前和右前、左后和右后，不直接要求前后脚同步。
+- 它不能保证 `FL+HR / FR+HL` 的对角相位关系。
+- 后续版本已移除该约束，避免继续奖励“左右镜像但前后腿动作不协调”的局部解。
 
 更可疑的因素：
 
@@ -335,7 +335,7 @@ Run：
 
 - `2026-06-05_09-55-36` 的真实 play 仍然表现为小跳/拖行，不会主动抬腿跨楼梯。
 - 日志中 terrain level 能升到中高等级，但 `velocity error xy` 随等级升高明显变大，`action |mean|` 接近 `4-5`，说明策略在用大动作硬蹭。
-- 图像观察显示当前 `leg_symmetry` 只保证左右镜像，并不保证对角 trot 相位。
+- 图像观察显示旧的左右镜像姿态约束只保证左右镜像，并不保证对角 trot 相位。
 
 本次改动：
 
@@ -450,17 +450,17 @@ Run：
 - 这次没有改 observation/model shape，可以从 `mjlab_parity_footobs_v1_smoke` 的 checkpoint 分支继续训。
 - 建议先从最近 checkpoint 分支续训 1000-3000 轮观察 play，不建议从 0 重训。
 
-## 2026-06-05 remove leg symmetry and constrain hind pose
+## 2026-06-05 remove left-right mirror pose reward and constrain hind pose
 
 现象：
 
-- `leg_symmetry` 约束的是左右镜像姿态，不是 `FL+HR / FR+HL` 的 trot 相位。
+- 旧的左右镜像姿态约束不是 `FL+HR / FR+HL` 的 trot 相位约束。
 - play 中前腿步态已经较正常，但后腿有明显内收，后小腿/膝部拖地。
 - 这个问题应优先解决后腿姿态，再解决后腿触地。
 
 本次修改：
 
-- 禁用 `leg_symmetry`，避免继续奖励“左右镜像但前后腿动作不协调”的局部解。
+- 禁用旧的左右镜像姿态约束，避免继续奖励“左右镜像但前后腿动作不协调”的局部解。
 - 新增 `hind_hip_roll_pose`：
   - 只约束 `hl_hip_roll_joint`、`hr_hip_roll_joint` 接近默认站姿。
   - 权重 `-0.35`。
@@ -475,4 +475,4 @@ Run：
 
 - 这次仍然不加显式 trot 相位奖励，避免破坏当前已经出现的自然步态。
 - 这次没有改 observation/model shape，checkpoint 结构兼容。
-- 如果要重新训练，建议 run name 使用 `no_leg_symmetry_hind_pose_v1`。
+- 如果要重新训练，建议 run name 使用 `hind_pose_v1`。

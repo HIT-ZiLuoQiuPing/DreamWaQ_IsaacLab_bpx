@@ -64,7 +64,9 @@ def terrain_levels_vel(
     streak[env_ids] = torch.where(successful, streak[env_ids] + 1, torch.zeros_like(streak[env_ids]))
 
     step_counter = _curriculum_step_counter(env)
-    if step_counter < warmup_steps:
+    if level_step_interval <= 0:
+        allowed_max_level = max(getattr(terrain_generator, "num_rows", 1) - 1, 0)
+    elif step_counter < warmup_steps:
         allowed_max_level = 0
     else:
         step_interval = max(level_step_interval, 1)
@@ -138,6 +140,11 @@ def command_vel_stages(
             stage_name = f"forward_{name}"
             if stage_name in selected:
                 setattr(forward_ranges, name, selected[stage_name])
+            elif name == "lin_vel_x" and name in selected:
+                low, high = selected[name]
+                setattr(forward_ranges, name, (max(0.0, low), high))
+            elif name in selected:
+                setattr(forward_ranges, name, selected[name])
     return torch.tensor(ranges.lin_vel_x[1], device=env.device)
 
 

@@ -433,6 +433,29 @@ def bad_two_foot_contact_pattern(
     return (two_feet & bad_pair).float() * (command_norm > 0.1).float()
 
 
+def _foot_heights_above_terrain(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    asset: RigidObject = env.scene[asset_cfg.name]
+    sensor = env.scene.sensors[sensor_cfg.name]
+    foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+    ray_hits = sensor.data.ray_hits_w
+    hits_z = ray_hits[..., 2]
+    fallback_z = asset.data.root_pos_w[:, 2].unsqueeze(-1) - 0.42
+    valid_hits = torch.isfinite(hits_z)
+    hits_z = torch.where(valid_hits, hits_z, fallback_z)
+
+    foot_xy = foot_pos[..., :2]
+    ray_xy = ray_hits[..., :2]
+    distances = torch.sum(torch.square(foot_xy.unsqueeze(2) - ray_xy.unsqueeze(1)), dim=-1)
+    distances = torch.where(valid_hits.unsqueeze(1), distances, torch.full_like(distances, float("inf")))
+    nearest_ids = torch.argmin(distances, dim=2)
+    terrain_z = torch.gather(hits_z, 1, nearest_ids)
+    return foot_pos[..., 2] - terrain_z
+
+
 def foot_clearance_reward(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
@@ -450,6 +473,44 @@ def foot_clearance_reward(
     reward = torch.mean(reward, dim=1)
     reward *= torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
     return reward
+
+
+def foot_clearance_terrain_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    target_height: float,
+    command_name: str = "base_velocity",
+    command_threshold: float = 0.05,
+    tanh_mult: float = 2.0,
+) -> torch.Tensor:
+    """Penalize moving feet that are not near the target height above terrain."""
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    foot_heights = _foot_heights_above_terrain(env, asset_cfg, sensor_cfg)
+    foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
+    penalty = torch.mean(torch.square(foot_heights - target_height) * foot_velocity_tanh, dim=1)
+    command_norm = torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    return penalty * (command_norm > command_threshold).float()
+
+
+def feet_swing_height_terrain_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    contact_sensor_cfg: SceneEntityCfg,
+    target_height: float,
+    command_name: str = "base_velocity",
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Penalize airborne feet whose height above terrain misses the target."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
+    in_air = contact_sensor.data.current_air_time[:, contact_sensor_cfg.body_ids] > 0.0
+    foot_heights = _foot_heights_above_terrain(env, asset_cfg, sensor_cfg)
+    penalty = torch.mean(torch.square(foot_heights - target_height) * in_air.float(), dim=1)
+    command_norm = torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    return penalty * (command_norm > command_threshold).float()
 
 
 def feet_height_body(

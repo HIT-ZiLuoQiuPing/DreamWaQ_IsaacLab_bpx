@@ -328,6 +328,58 @@ Run：
   --run_name gait_speed_v3_branch_from_3200 \
   --headless
 ```
+
+## 2026-06-05 mjlab parity foot-observation 修正
+
+触发原因：
+
+- `2026-06-05_09-55-36` 的真实 play 仍然表现为小跳/拖行，不会主动抬腿跨楼梯。
+- 日志中 terrain level 能升到中高等级，但 `velocity error xy` 随等级升高明显变大，`action |mean|` 接近 `4-5`，说明策略在用大动作硬蹭。
+- 图像观察显示当前 `leg_symmetry` 只保证左右镜像，并不保证对角 trot 相位。
+
+本次改动：
+
+- `clip_actions` 从 `1.0` 改为 `None`，对齐 mjlab 的 `clip_actions: null`。
+- command 恢复 mjlab 语义：
+  - `heading_command=True`
+  - `heading_control_stiffness=0.5`
+  - `rel_heading_envs=0.3`
+  - `rel_forward_envs=0.75`
+  - 主速度课程恢复 mjlab 阶段表。
+- 地形课程恢复更接近 mjlab：
+  - 固定距离升级，`promotion_distance_ratio=0.75`
+  - `demote_only_early_termination=False`
+  - 不再使用额外 command-ratio 升级门槛和等级开放节奏。
+- 去掉 gait_speed_v3 额外项：
+  - `forward_velocity_error`
+  - `no_forward_motion`
+  - `crawl_penalty`
+- 去掉 `base_height` termination，避免它把策略推向低速保守/拖行局部最优。
+- bad orientation 改为 mjlab 的约 `70deg` 限制。
+- 补齐 CENet estimator 和 critic 的脚部 privileged observation：
+  - `foot_height`
+  - `foot_air_time`
+  - `foot_contact`
+  - `foot_contact_forces`
+- 将 `feet_clearance` 改为脚相对地形高度的 L2 penalty，并补 `feet_swing_height`。
+
+重要影响：
+
+- estimator/critic 输入维度已经变化，旧 checkpoint 不兼容。
+- 这版必须从 0 训练，不能从 `2026-06-05_09-55-36` 或更早 checkpoint 继续。
+
+建议从 0 短测：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --num_envs 1024 \
+  --max_iterations 5000 \
+  --run_name mjlab_parity_footobs_v1_smoke \
+  --headless
+```
+
+如果 3000-5000 轮 play 仍然前后腿同步/小跳，则下一步才应该加入显式对角 trot contact 约束，而不是继续调速度奖励。
 | `Episode_Termination/base_height` | 0.110 | 仍有约 11% 高度失败 |
 | `Rollout/action_mean_abs` | 4.515 | policy raw mean 远超 `clip_actions=1.0`，动作大量饱和 |
 

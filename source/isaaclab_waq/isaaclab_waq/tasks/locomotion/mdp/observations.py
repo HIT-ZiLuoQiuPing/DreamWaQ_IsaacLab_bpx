@@ -37,6 +37,27 @@ def foot_height_body(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.T
     return foot_z - root_z
 
 
+def foot_height_scan(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Foot heights above the nearest scanned terrain point."""
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    sensor = env.scene.sensors[sensor_cfg.name]
+    foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+    ray_hits = sensor.data.ray_hits_w
+    hits_z = ray_hits[..., 2]
+    fallback_z = asset.data.root_pos_w[:, 2].unsqueeze(-1) - 0.42
+    valid_hits = torch.isfinite(hits_z)
+    hits_z = torch.where(valid_hits, hits_z, fallback_z)
+
+    foot_xy = foot_pos[..., :2]
+    ray_xy = ray_hits[..., :2]
+    distances = torch.sum(torch.square(foot_xy.unsqueeze(2) - ray_xy.unsqueeze(1)), dim=-1)
+    distances = torch.where(valid_hits.unsqueeze(1), distances, torch.full_like(distances, float("inf")))
+    nearest_ids = torch.argmin(distances, dim=2)
+    terrain_z = torch.gather(hits_z, 1, nearest_ids)
+    return foot_pos[..., 2] - terrain_z
+
+
 def foot_air_time(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Current air time for each foot."""
 

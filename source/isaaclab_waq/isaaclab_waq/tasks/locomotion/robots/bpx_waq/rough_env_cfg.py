@@ -140,19 +140,20 @@ class CommandsCfg:
         resampling_time_range=(6.0, 10.0),
         rel_standing_envs=0.02,
         rel_forward_envs=0.75,
-        rel_heading_envs=0.0,
-        heading_command=False,
+        rel_heading_envs=0.3,
+        heading_command=True,
+        heading_control_stiffness=0.5,
         debug_vis=False,
         ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.10, 0.85),
+            lin_vel_x=(-0.20, 0.75),
             lin_vel_y=(-0.10, 0.10),
             ang_vel_z=(-0.25, 0.25),
             heading=(-math.pi, math.pi),
         ),
         forward_ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.30, 0.90),
-            lin_vel_y=(-0.05, 0.05),
-            ang_vel_z=(-0.12, 0.12),
+            lin_vel_x=(0.0, 0.75),
+            lin_vel_y=(-0.10, 0.10),
+            ang_vel_z=(-0.25, 0.25),
             heading=(-math.pi, math.pi),
         ),
         limit_ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
@@ -221,6 +222,31 @@ class ObservationsCfg:
             func=mdp.height_scan,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             clip=(-1.0, 5.0),
+            scale=0.2,
+        )
+        foot_height = ObsTerm(
+            func=mdp.foot_height_scan,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+            },
+            clip=(-1.0, 1.0),
+        )
+        foot_air_time = ObsTerm(
+            func=mdp.foot_air_time,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
+            clip=(0.0, 1.0),
+        )
+        foot_contact = ObsTerm(
+            func=mdp.foot_contact,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
+            clip=(0.0, 1.0),
+        )
+        foot_contact_forces = ObsTerm(
+            func=mdp.foot_contact_forces,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
+            clip=(-100.0, 100.0),
+            scale=0.01,
         )
 
         def __post_init__(self):
@@ -244,6 +270,31 @@ class ObservationsCfg:
             func=mdp.height_scan,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             clip=(-1.0, 5.0),
+            scale=0.2,
+        )
+        foot_height = ObsTerm(
+            func=mdp.foot_height_scan,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+            },
+            clip=(-1.0, 1.0),
+        )
+        foot_air_time = ObsTerm(
+            func=mdp.foot_air_time,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
+            clip=(0.0, 1.0),
+        )
+        foot_contact = ObsTerm(
+            func=mdp.foot_contact,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
+            clip=(0.0, 1.0),
+        )
+        foot_contact_forces = ObsTerm(
+            func=mdp.foot_contact_forces,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
+            clip=(-100.0, 100.0),
+            scale=0.01,
         )
 
         def __post_init__(self):
@@ -328,29 +379,12 @@ class RewardsCfg:
     )
     track_forward_velocity_fine = RewTerm(
         func=mdp.track_forward_velocity_exp,
-        weight=2.0,
-        params={"command_name": "base_velocity", "std": 0.22},
+        weight=1.4,
+        params={"command_name": "base_velocity", "std": 0.25},
     )
-    forward_velocity_error = RewTerm(
-        func=mdp.forward_velocity_error_l1,
-        weight=-0.8,
-        params={"command_name": "base_velocity"},
-    )
-    no_forward_motion = RewTerm(
-        func=mdp.no_forward_motion,
-        weight=-0.7,
-        params={"command_name": "base_velocity", "min_command": 0.25, "min_velocity_ratio": 0.35},
-    )
-    crawl_penalty = RewTerm(
-        func=mdp.crawl_penalty,
-        weight=-0.8,
-        params={
-            "command_name": "base_velocity",
-            "min_command": 0.30,
-            "min_velocity_ratio": 0.50,
-            "action_threshold": 0.55,
-        },
-    )
+    forward_velocity_error = None
+    no_forward_motion = None
+    crawl_penalty = None
     track_lateral_velocity_fine = RewTerm(
         func=mdp.track_lateral_velocity_exp,
         weight=1.2,
@@ -421,14 +455,24 @@ class RewardsCfg:
         },
     )
     feet_clearance = RewTerm(
-        func=mdp.foot_clearance_reward,
-        weight=0.14,
+        func=mdp.foot_clearance_terrain_l2,
+        weight=-2.0,
         params={
-            "std": 0.05,
-            "tanh_mult": 2.0,
-            "target_height": 0.14,
+            "target_height": 0.12,
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+        },
+    )
+    feet_swing_height = RewTerm(
+        func=mdp.feet_swing_height_terrain_l2,
+        weight=-0.25,
+        params={
+            "target_height": 0.12,
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+            "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
     diagonal_trot_contact = None
@@ -458,11 +502,8 @@ class TerminationsCfg:
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=BASE_BODY_NAME), "threshold": 5.0},
     )
-    base_height = DoneTerm(
-        func=mdp.root_height_below_terrain,
-        params={"minimum_height": 0.32, "sensor_cfg": SceneEntityCfg("height_scanner")},
-    )
-    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.8})
+    base_height = None
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.2217304763960306})
 
 
 @configclass
@@ -471,15 +512,15 @@ class CurriculumCfg:
         func=mdp.terrain_levels_vel,
         params={
             "command_name": "base_velocity",
-            "promotion_distance_ratio": 0.80,
-            "promotion_command_ratio": 0.72,
+            "promotion_distance_ratio": 0.75,
+            "promotion_command_ratio": None,
             "demotion_command_ratio": 0.5,
-            "minimum_promotion_distance": 3.5,
+            "minimum_promotion_distance": 0.0,
             "warmup_steps": 0,
-            "level_step_interval": 900 * 16,
+            "level_step_interval": 0,
             "consecutive_successes": 1,
-            "demote_only_early_termination": True,
-            "min_level_hold_steps": 150 * 16,
+            "demote_only_early_termination": False,
+            "min_level_hold_steps": 0,
         },
     )
     command_vel = CurrTerm(
@@ -489,66 +530,45 @@ class CurriculumCfg:
             "velocity_stages": [
                 {
                     "step": 0,
-                    "lin_vel_x": (-0.10, 0.85),
+                    "lin_vel_x": (-0.20, 0.75),
                     "lin_vel_y": (-0.10, 0.10),
                     "ang_vel_z": (-0.25, 0.25),
-                    "forward_lin_vel_x": (0.30, 0.90),
-                    "forward_lin_vel_y": (-0.05, 0.05),
-                    "forward_ang_vel_z": (-0.12, 0.12),
                 },
                 {
-                    "step": 3000 * 16,
-                    "lin_vel_x": (-0.20, 1.00),
-                    "lin_vel_y": (-0.14, 0.14),
-                    "ang_vel_z": (-0.32, 0.32),
-                    "forward_lin_vel_x": (0.40, 1.10),
-                    "forward_lin_vel_y": (-0.06, 0.06),
-                    "forward_ang_vel_z": (-0.15, 0.15),
-                },
-                {
-                    "step": 7000 * 16,
-                    "lin_vel_x": (-0.30, 1.15),
+                    "step": 6000 * 16,
+                    "lin_vel_x": (-0.30, 0.95),
                     "lin_vel_y": (-0.18, 0.18),
-                    "ang_vel_z": (-0.42, 0.42),
-                    "forward_lin_vel_x": (0.50, 1.25),
-                    "forward_lin_vel_y": (-0.08, 0.08),
-                    "forward_ang_vel_z": (-0.18, 0.18),
+                    "ang_vel_z": (-0.40, 0.40),
                 },
                 {
                     "step": 12000 * 16,
-                    "lin_vel_x": (-0.35, 1.35),
+                    "lin_vel_x": (-0.35, 1.10),
                     "lin_vel_y": (-0.22, 0.22),
-                    "ang_vel_z": (-0.50, 0.50),
-                    "forward_lin_vel_x": (0.60, 1.45),
-                    "forward_lin_vel_y": (-0.10, 0.10),
-                    "forward_ang_vel_z": (-0.22, 0.22),
+                    "ang_vel_z": (-0.48, 0.48),
                 },
                 {
-                    "step": 20000 * 16,
-                    "lin_vel_x": (-0.45, 1.55),
-                    "lin_vel_y": (-0.28, 0.28),
-                    "ang_vel_z": (-0.58, 0.58),
-                    "forward_lin_vel_x": (0.70, 1.65),
-                    "forward_lin_vel_y": (-0.12, 0.12),
-                    "forward_ang_vel_z": (-0.25, 0.25),
+                    "step": 18000 * 16,
+                    "lin_vel_x": (-0.45, 1.25),
+                    "lin_vel_y": (-0.30, 0.30),
+                    "ang_vel_z": (-0.60, 0.60),
                 },
                 {
-                    "step": 32000 * 16,
-                    "lin_vel_x": (-0.55, 1.70),
+                    "step": 26000 * 16,
+                    "lin_vel_x": (-0.50, 1.40),
+                    "lin_vel_y": (-0.30, 0.30),
+                    "ang_vel_z": (-0.60, 0.60),
+                },
+                {
+                    "step": 36000 * 16,
+                    "lin_vel_x": (-0.55, 1.60),
                     "lin_vel_y": (-0.32, 0.32),
                     "ang_vel_z": (-0.65, 0.65),
-                    "forward_lin_vel_x": (0.75, 1.75),
-                    "forward_lin_vel_y": (-0.14, 0.14),
-                    "forward_ang_vel_z": (-0.28, 0.28),
                 },
                 {
                     "step": 45000 * 16,
                     "lin_vel_x": (-0.60, 1.80),
                     "lin_vel_y": (-0.35, 0.35),
                     "ang_vel_z": (-0.70, 0.70),
-                    "forward_lin_vel_x": (0.80, 1.80),
-                    "forward_lin_vel_y": (-0.15, 0.15),
-                    "forward_ang_vel_z": (-0.30, 0.30),
                 },
             ],
         },

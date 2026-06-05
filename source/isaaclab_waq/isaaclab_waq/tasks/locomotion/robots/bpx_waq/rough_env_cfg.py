@@ -33,6 +33,15 @@ from isaaclab_waq.tasks.locomotion import mdp
 
 HIND_FEET_BODY_NAMES = ["hl_toe_link", "hr_toe_link"]
 HIND_CALF_BODY_NAMES = ["hl_calf_link", "hr_calf_link"]
+HIND_HIP_ROLL_JOINT_NAMES = ["hl_hip_roll_joint", "hr_hip_roll_joint"]
+HIND_LEG_JOINT_NAMES = [
+    "hl_hip_roll_joint",
+    "hl_hip_pitch_joint",
+    "hl_knee_joint",
+    "hr_hip_roll_joint",
+    "hr_hip_pitch_joint",
+    "hr_knee_joint",
+]
 
 
 BPX_ROUGH_TERRAINS_CFG = terrain_gen.TerrainGeneratorCfg(
@@ -409,11 +418,7 @@ class RewardsCfg:
         weight=-1.2,
         params={"command_name": "base_velocity"},
     )
-    leg_symmetry = RewTerm(
-        func=mdp.leg_symmetry,
-        weight=-0.25,
-        params={"command_name": "base_velocity"},
-    )
+    leg_symmetry = None
 
     lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
@@ -435,6 +440,24 @@ class RewardsCfg:
         weight=-0.08,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
+            "stand_still_scale": 1.0,
+            "velocity_threshold": 0.3,
+        },
+    )
+    hind_hip_roll_pose = RewTerm(
+        func=mdp.joint_position_penalty,
+        weight=-0.35,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=HIND_HIP_ROLL_JOINT_NAMES),
+            "stand_still_scale": 1.0,
+            "velocity_threshold": 0.3,
+        },
+    )
+    hind_leg_pose = RewTerm(
+        func=mdp.joint_position_penalty,
+        weight=-0.05,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=HIND_LEG_JOINT_NAMES),
             "stand_still_scale": 1.0,
             "velocity_threshold": 0.3,
         },
@@ -481,7 +504,7 @@ class RewardsCfg:
     )
     hind_feet_swing_height = RewTerm(
         func=mdp.feet_swing_height_terrain_l2,
-        weight=-0.18,
+        weight=-0.24,
         params={
             "target_height": 0.14,
             "command_name": "base_velocity",
@@ -509,7 +532,7 @@ class RewardsCfg:
     )
     hind_calf_contacts = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-0.55,
+        weight=-0.75,
         params={
             "threshold": 1.0,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=HIND_CALF_BODY_NAMES),

@@ -449,3 +449,30 @@ Run：
 
 - 这次没有改 observation/model shape，可以从 `mjlab_parity_footobs_v1_smoke` 的 checkpoint 分支继续训。
 - 建议先从最近 checkpoint 分支续训 1000-3000 轮观察 play，不建议从 0 重训。
+
+## 2026-06-05 remove leg symmetry and constrain hind pose
+
+现象：
+
+- `leg_symmetry` 约束的是左右镜像姿态，不是 `FL+HR / FR+HL` 的 trot 相位。
+- play 中前腿步态已经较正常，但后腿有明显内收，后小腿/膝部拖地。
+- 这个问题应优先解决后腿姿态，再解决后腿触地。
+
+本次修改：
+
+- 禁用 `leg_symmetry`，避免继续奖励“左右镜像但前后腿动作不协调”的局部解。
+- 新增 `hind_hip_roll_pose`：
+  - 只约束 `hl_hip_roll_joint`、`hr_hip_roll_joint` 接近默认站姿。
+  - 权重 `-0.35`。
+- 新增 `hind_leg_pose`：
+  - 轻微约束两条后腿全部 6 个关节接近默认姿态。
+  - 权重 `-0.05`。
+- 加强后腿拖地相关项：
+  - `hind_feet_swing_height`: `-0.18 -> -0.24`
+  - `hind_calf_contacts`: `-0.55 -> -0.75`
+
+说明：
+
+- 这次仍然不加显式 trot 相位奖励，避免破坏当前已经出现的自然步态。
+- 这次没有改 observation/model shape，checkpoint 结构兼容。
+- 如果要重新训练，建议 run name 使用 `no_leg_symmetry_hind_pose_v1`。

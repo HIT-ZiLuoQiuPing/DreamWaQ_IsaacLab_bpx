@@ -132,6 +132,12 @@ def command_vel_stages(
     for name in ("lin_vel_x", "lin_vel_y", "ang_vel_z"):
         if name in selected:
             setattr(ranges, name, selected[name])
+    forward_ranges = getattr(command_term.cfg, "forward_ranges", None)
+    if forward_ranges is not None:
+        for name in ("lin_vel_x", "lin_vel_y", "ang_vel_z"):
+            stage_name = f"forward_{name}"
+            if stage_name in selected:
+                setattr(forward_ranges, name, selected[stage_name])
     return torch.tensor(ranges.lin_vel_x[1], device=env.device)
 
 

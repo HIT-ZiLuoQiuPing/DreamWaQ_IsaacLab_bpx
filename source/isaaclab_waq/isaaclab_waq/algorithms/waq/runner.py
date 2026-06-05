@@ -503,6 +503,14 @@ class DreamWaQRunner:
                         metrics[f"Curriculum/{name}_min"] = low
                     if high is not None:
                         metrics[f"Curriculum/{name}_max"] = high
+            forward_ranges = getattr(getattr(command_term, "cfg", None), "forward_ranges", None)
+            if forward_ranges is not None:
+                for name in ("lin_vel_x", "lin_vel_y", "ang_vel_z"):
+                    low, high = self._range_values(getattr(forward_ranges, name, None))
+                    if low is not None:
+                        metrics[f"Curriculum/forward_{name}_min"] = low
+                    if high is not None:
+                        metrics[f"Curriculum/forward_{name}_max"] = high
 
         return metrics
 
@@ -685,6 +693,13 @@ class DreamWaQRunner:
                         (
                             f"[{curriculum_metrics.get('Curriculum/lin_vel_x_min', 0.0):.2f}, "
                             f"{curriculum_metrics.get('Curriculum/lin_vel_x_max', 0.0):.2f}]"
+                        ),
+                    ),
+                    self._line(
+                        "Forward cmd x range",
+                        (
+                            f"[{curriculum_metrics.get('Curriculum/forward_lin_vel_x_min', 0.0):.2f}, "
+                            f"{curriculum_metrics.get('Curriculum/forward_lin_vel_x_max', 0.0):.2f}]"
                         ),
                     ),
                     self._line(

@@ -162,6 +162,30 @@ def no_forward_motion(
     return stalled.float()
 
 
+def crawl_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_command: float = 0.25,
+    min_velocity_ratio: float = 0.45,
+    action_threshold: float = 0.45,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize high-action crawling when a forward command is not being tracked."""
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    action = getattr(env.action_manager, "action", None)
+    if action is None:
+        return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+
+    command_x = command[:, 0]
+    velocity_x = asset.data.root_link_lin_vel_b[:, 0]
+    velocity_shortfall = torch.clamp(command_x * min_velocity_ratio - velocity_x, min=0.0)
+    action_excess = torch.clamp(torch.mean(torch.abs(action), dim=1) - action_threshold, min=0.0)
+    active = command_x > min_command
+    return velocity_shortfall * action_excess * active.float()
+
+
 def track_lateral_velocity_exp(
     env: ManagerBasedRLEnv,
     command_name: str,

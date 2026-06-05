@@ -258,6 +258,76 @@ Run：
 | `Curriculum/terrain_promotion_distance` | 6.00 | 原 mjlab 风格绝对距离阈值过硬 |
 | `Rollout/velocity_x` | 0.272 | 实际前进速度偏低 |
 | `Metrics/base_velocity/error_vel_xy` | 0.297 | 速度误差仍偏大 |
+
+## 2026-06-05 gait_speed_v3 反蠕动分支
+
+触发原因：
+
+- `2026-06-04_16-04-43` 的真实 play 观察显示，机器人更多是在低身位蠕动，而不是形成清晰四足步态。
+- 训练日志中地形等级稳步上升，但速度跟随变差：terrain level 与 `velocity_x` 呈明显负相关，`action_mean_abs` 随地形等级升高而增大。
+- 约 15% episode 因 `base_height` 终止，说明策略在困难地形上更偏向保命和低姿态，而不是稳定跨越。
+
+本次改动不是继续纯 mjlab parity，而是在 parity 基础上做针对性分支：
+
+- 新增 `ForwardBiasedVelocityCommandCfg`，实现 mjlab 风格 `rel_forward_envs=0.75`，其中 75% 非站立环境使用独立前进命令范围。
+- 初始前进命令提高到 `forward_lin_vel_x=(0.30, 0.90)`，避免早期长期低速导致策略学会蠕动。
+- 速度课程提前：
+  - `0`: forward x `(0.30, 0.90)`
+  - `3000*16`: `(0.40, 1.10)`
+  - `7000*16`: `(0.50, 1.25)`
+  - `12000*16`: `(0.60, 1.45)`
+  - 后续逐步到 `(0.80, 1.80)`
+- 启用速度跟踪约束：
+  - `forward_velocity_error`
+  - `no_forward_motion`
+  - `crawl_penalty`
+- 加强前进精细速度奖励：`track_forward_velocity_fine` 从 `1.4/std=0.25` 改为 `2.0/std=0.22`。
+- 加强脚部抬高奖励：`feet_clearance` 从 `0.08/0.12m` 改为 `0.14/0.14m`。
+- 放慢地形课程并提高升级门槛：
+  - `level_step_interval: 600*16 -> 900*16`
+  - `promotion_distance_ratio: 0.75 -> 0.80`
+  - `promotion_command_ratio: 0.60 -> 0.72`
+  - `minimum_promotion_distance: 3.0 -> 3.5`
+  - `min_level_hold_steps: 100*16 -> 150*16`
+- 日志新增 `Forward cmd x range`，用于确认前进命令课程是否真正生效。
+
+预期现象：
+
+- 前 1000-3000 轮地形平均等级可能比上一版上升更慢，这是有意的。
+- `Rollout/cmd_x vs vel_x` 的差距应该比上一版缩小。
+- `Rollout/action |mean|` 不应继续随 terrain level 明显上升；如果仍然上升，说明 crawl penalty 仍不够或动作尺度/物理配置还存在问题。
+- `Reward terms` 中新增的 `forward_velocity_error`、`no_forward_motion`、`crawl_penalty` 应该在早期明显，后期下降。
+
+训练建议：
+
+- 最稳妥：从 0 训练 `3000-5000` 轮短测，先 play 看是否形成步态。
+- 可选：从 `2026-06-04_16-04-43/model_3200.pt` 分支续训，但该 checkpoint 已有蠕动倾向，建议使用 `--no_load_optimizer` 并把课程 offset 调低。
+
+从 0 短测：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --num_envs 1024 \
+  --max_iterations 5000 \
+  --run_name gait_speed_v3_from_scratch_smoke \
+  --headless
+```
+
+从旧 checkpoint 分支：
+
+```bash
+./isaaclab_waq.sh --waq-train \
+  --task Isaac-BPX-WAQ-Rough-v0 \
+  --num_envs 1024 \
+  --resume \
+  --checkpoint logs/waq/bpx_waq_rough/2026-06-04_16-04-43/model_3200.pt \
+  --no_load_optimizer \
+  --curriculum_offset_iterations 1500 \
+  --max_iterations 5000 \
+  --run_name gait_speed_v3_branch_from_3200 \
+  --headless
+```
 | `Episode_Termination/base_height` | 0.110 | 仍有约 11% 高度失败 |
 | `Rollout/action_mean_abs` | 4.515 | policy raw mean 远超 `clip_actions=1.0`，动作大量饱和 |
 

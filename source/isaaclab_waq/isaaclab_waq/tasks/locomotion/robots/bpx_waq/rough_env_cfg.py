@@ -395,9 +395,26 @@ class RewardsCfg:
         weight=1.8,
         params={"command_name": "base_velocity", "std": 0.25},
     )
-    forward_velocity_error = None
-    no_forward_motion = None
-    crawl_penalty = None
+    forward_velocity_error = RewTerm(
+        func=mdp.forward_velocity_error_l1,
+        weight=-0.8,
+        params={"command_name": "base_velocity"},
+    )
+    no_forward_motion = RewTerm(
+        func=mdp.no_forward_motion,
+        weight=-2.0,
+        params={"command_name": "base_velocity", "min_command": 0.20, "min_velocity_ratio": 0.35},
+    )
+    crawl_penalty = RewTerm(
+        func=mdp.crawl_penalty,
+        weight=-0.8,
+        params={
+            "command_name": "base_velocity",
+            "min_command": 0.25,
+            "min_velocity_ratio": 0.45,
+            "action_threshold": 0.75,
+        },
+    )
     track_lateral_velocity_fine = RewTerm(
         func=mdp.track_lateral_velocity_exp,
         weight=1.2,

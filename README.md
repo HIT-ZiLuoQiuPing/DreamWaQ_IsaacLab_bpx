@@ -35,3 +35,23 @@ The rough-terrain curriculum starts from easy rows, but the final rows include 1
 ```bash
 ./isaaclab_waq.sh --waq-train --task Isaac-BPX-WAQ-Rough-v0 --num_envs 1024 --resume --reset_curriculum_on_resume --checkpoint logs/waq/bpx_waq_rough/2026-06-03_11-20-22/model_15000.pt --max_iterations 25000 --run_name harder_terrain_speedup_curriculum_reset --headless
 ```
+
+## MuJoCo Sim2sim
+
+Export a trained DreamWaQ checkpoint to a TorchScript deployment policy:
+
+```bash
+./isaaclab_waq.sh --waq-export --checkpoint logs/waq/bpx_waq_rough/<run>/model_44000.pt
+```
+
+This writes `policy_jit.pt` and `policy_jit.json` next to the checkpoint. Run it in MuJoCo on flat terrain:
+
+```bash
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive
+```
+
+Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. A simple stair scene is also available:
+
+```bash
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --terrain stairs --step-height 0.08 --real-time --interactive
+```

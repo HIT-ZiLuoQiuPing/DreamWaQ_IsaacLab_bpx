@@ -50,6 +50,9 @@ def _arg_present(name: str) -> bool:
     return any(arg == name or arg.startswith(f"{name}=") for arg in sys.argv[1:])
 
 
+_TERRAIN_PROFILE_CHOICES = ("mixed", "flat", "rough", "slope", "slope_inv", "boxes", "stairs", "stairs_inv", "wave")
+
+
 parser = argparse.ArgumentParser(description="Play a DreamWaQ-style BPX policy.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default="Isaac-BPX-WAQ-Rough-Play-v0", help="Name of the task.")
@@ -69,18 +72,30 @@ parser.add_argument("--command_step", type=float, default=0.1, help="Interactive
 parser.add_argument("--yaw_step", type=float, default=0.1, help="Interactive yaw command increment.")
 parser.add_argument(
     "--terrain_profile",
+    "--terrain-profile",
+    "--terrain",
+    dest="terrain_profile",
     type=str,
     default="rough",
-    choices=("mixed", "flat", "rough", "slope", "slope_inv", "boxes", "stairs", "stairs_inv", "wave"),
+    choices=_TERRAIN_PROFILE_CHOICES,
     help="Terrain profile generated for play.",
 )
-parser.add_argument("--terrain_level", type=int, default=5, help="Exact generated terrain level for play.")
-parser.add_argument("--terrain_rows", type=int, default=10, help="Terrain rows generated for play.")
-parser.add_argument("--terrain_cols", type=int, default=4, help="Terrain columns generated for play.")
-parser.add_argument("--follow_camera", action="store_true", default=False, help="Update the camera to follow env 0.")
-parser.add_argument("--camera_distance", type=float, default=3.0, help="Distance used by --follow_camera.")
-parser.add_argument("--camera_height", type=float, default=0.75, help="Height offset used by --follow_camera.")
-parser.add_argument("--camera_target_height", type=float, default=0.12, help="Look-at height offset used by --follow_camera.")
+parser.add_argument("--terrain_level", "--terrain-level", dest="terrain_level", type=int, default=5, help="Exact generated terrain level for play.")
+parser.add_argument("--terrain_rows", "--terrain-rows", dest="terrain_rows", type=int, default=10, help="Terrain rows generated for play.")
+parser.add_argument("--terrain_cols", "--terrain-cols", dest="terrain_cols", type=int, default=4, help="Terrain columns generated for play.")
+parser.add_argument(
+    "--terrain_col",
+    "--terrain-col",
+    dest="terrain_col",
+    type=int,
+    default=None,
+    help="Fixed terrain column for mixed play. Named profiles always use column 0 after filtering.",
+)
+parser.add_argument("--list_terrains", "--list-terrains", dest="list_terrains", action="store_true", default=False, help="List play terrain profiles and exit.")
+parser.add_argument("--follow_camera", "--follow-camera", dest="follow_camera", action="store_true", default=False, help="Update the camera to follow env 0.")
+parser.add_argument("--camera_distance", "--camera-distance", dest="camera_distance", type=float, default=3.0, help="Distance used by --follow_camera.")
+parser.add_argument("--camera_height", "--camera-height", dest="camera_height", type=float, default=0.75, help="Height offset used by --follow_camera.")
+parser.add_argument("--camera_target_height", "--camera-target-height", dest="camera_target_height", type=float, default=0.12, help="Look-at height offset used by --follow_camera.")
 parser.add_argument(
     "--no_velocity_arrows",
     action="store_true",
@@ -95,6 +110,12 @@ parser.add_argument(
 )
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+
+if args_cli.list_terrains:
+    print("Available play terrain profiles:")
+    for terrain_name in _TERRAIN_PROFILE_CHOICES:
+        print(f"  - {terrain_name}")
+    raise SystemExit(0)
 
 has_nvidia_device = _has_nvidia_device()
 livestream_requested = _arg_present("--livestream")
@@ -191,6 +212,7 @@ _TERRAIN_PROFILE_TO_KEY = {
 def _configure_play_terrain_cfg(env_cfg, profile: str, rows: int, cols: int):
     terrain_generator = env_cfg.scene.terrain.terrain_generator
     if terrain_generator is None:
+        print("[INFO] Play terrain generator is disabled.", flush=True)
         return
 
     terrain_generator.curriculum = True
@@ -208,6 +230,18 @@ def _configure_play_terrain_cfg(env_cfg, profile: str, rows: int, cols: int):
         terrain_cfg = terrain_generator.sub_terrains[terrain_key]
         terrain_cfg.proportion = 1.0
         terrain_generator.sub_terrains = {terrain_key: terrain_cfg}
+        print(
+            f"[INFO] Play terrain profile '{profile}' selected: "
+            f"type={terrain_key}, rows={terrain_generator.num_rows}, cols={terrain_generator.num_cols}.",
+            flush=True,
+        )
+    else:
+        print(
+            "[INFO] Play terrain profile 'mixed' selected: "
+            f"types={list(terrain_generator.sub_terrains.keys())}, "
+            f"rows={terrain_generator.num_rows}, cols={terrain_generator.num_cols}.",
+            flush=True,
+        )
 
 
 def _configure_velocity_arrows(env_cfg, enabled: bool, marker_scale: float):
@@ -222,7 +256,7 @@ def _configure_velocity_arrows(env_cfg, enabled: bool, marker_scale: float):
         return
 
 
-def _force_play_terrain_origin(env, terrain_level: int | None, terrain_col: int = 0) -> bool:
+def _force_play_terrain_origin(env, terrain_level: int | None, terrain_col: int | None = None) -> bool:
     terrain = getattr(getattr(env.unwrapped, "scene", None), "terrain", None)
     terrain_origins = getattr(terrain, "terrain_origins", None)
     if terrain_origins is None:
@@ -231,13 +265,17 @@ def _force_play_terrain_origin(env, terrain_level: int | None, terrain_col: int 
     max_level = terrain_origins.shape[0] - 1
     max_col = terrain_origins.shape[1] - 1
     selected_level = max_level if terrain_level is None else int(_clamp(terrain_level, 0, max_level))
-    selected_col = int(_clamp(terrain_col, 0, max_col))
 
     terrain.terrain_levels[:] = selected_level
-    terrain.terrain_types[:] = selected_col
+    if terrain_col is not None:
+        selected_col = int(_clamp(terrain_col, 0, max_col))
+        terrain.terrain_types[:] = selected_col
+        col_msg = str(selected_col)
+    else:
+        col_msg = "existing"
     terrain.env_origins[:] = terrain.terrain_origins[terrain.terrain_levels, terrain.terrain_types]
     print(
-        f"[INFO] Play terrain origin fixed at level={selected_level}/{max_level}, column={selected_col}/{max_col}.",
+        f"[INFO] Play terrain origin fixed at level={selected_level}/{max_level}, column={col_msg}/{max_col}.",
         flush=True,
     )
     return True
@@ -362,7 +400,8 @@ def main():
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
-    if _force_play_terrain_origin(env, args_cli.terrain_level):
+    terrain_col = 0 if args_cli.terrain_profile != "mixed" else args_cli.terrain_col
+    if _force_play_terrain_origin(env, args_cli.terrain_level, terrain_col):
         env.reset()
     try:
         env.unwrapped.sim.set_camera_view(eye=(2.6, -3.0, 1.4), target=(0.0, 0.0, 0.35))

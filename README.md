@@ -50,7 +50,7 @@ This writes `policy_jit.pt` and `policy_jit.json` next to the checkpoint. Run it
 ./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive
 ```
 
-Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. The MuJoCo runner applies a conservative raw-action safety clip by default (`--clip-actions 2.0`), clamps joint targets to MuJoCo joint limits, and adds the trained actuator armature/friction to reduce sim2sim explosions. If the model is still unstable, first test a milder execution layer:
+Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. The MuJoCo runner applies a conservative raw-action safety clip by default (`--clip-actions 2.0`), keeps IsaacLab-style term-major observation history for CENet, and adds the trained actuator armature/friction to reduce sim2sim explosions. If the model is still unstable, first test a milder execution layer:
 
 ```bash
 ./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive --command-x 0.3 --clip-actions 1.5 --action-scale-multiplier 0.7
@@ -77,6 +77,8 @@ The MuJoCo player defaults to `--actuator-mode position`, which matches mjlab's 
 ```
 
 If you suspect the exported action/joint order is wrong, compare `--joint-order metadata`, `--joint-order type_major`, and `--joint-order alphabetical`.
+
+The CENet history layout defaults to `--history-layout term_major`, matching IsaacLab's observation manager: each observation term is flattened over history first, then the terms are concatenated. `--history-layout frame_major` is kept only as an ablation switch.
 
 A simple stair scene is also available:
 

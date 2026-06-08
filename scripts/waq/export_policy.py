@@ -227,7 +227,11 @@ def main():
             "joint_vel*0.05",
             "last_action",
         ],
-        "notes": "History is flattened oldest-to-newest, matching IsaacLab CircularBuffer.buffer.",
+        "history_layout": "term_major_oldest_to_newest",
+        "notes": (
+            "IsaacLab flattens history per observation term, then concatenates terms: "
+            "[term0_oldest..newest, term1_oldest..newest, ...]."
+        ),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 

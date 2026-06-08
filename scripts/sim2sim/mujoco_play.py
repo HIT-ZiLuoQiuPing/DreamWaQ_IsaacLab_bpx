@@ -238,7 +238,7 @@ class BpxMujocoSim:
         self.num_actions = int(metadata["num_actions"])
         self.command = [args.command_x, args.command_y, args.command_yaw]
         self.last_action = np.zeros(self.num_actions, dtype=np.float64)
-        self.history: deque[np.ndarray] = deque(maxlen=self.history_length)
+        self.history_terms: list[deque[np.ndarray]] = []
 
         control = metadata["control"]
         self.kp = float(control["stiffness"]) * args.kp_multiplier
@@ -291,7 +291,7 @@ class BpxMujocoSim:
         self.data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
         self.data.qpos[self.joint_qpos_addr] = self.default_joint_pos
         self.last_action[:] = 0.0
-        self.history.clear()
+        self.history_terms.clear()
         self.mujoco.mj_forward(self.model, self.data)
 
     def joint_pos(self) -> np.ndarray:
@@ -309,29 +309,45 @@ class BpxMujocoSim:
             quat = np.array(self.data.qpos[3:7], dtype=np.float64)
         return quat
 
-    def build_observation(self) -> np.ndarray:
-        obs = np.concatenate(
-            [
-                self.base_ang_vel() * 0.2,
-                _projected_gravity(self.base_quat()),
-                np.asarray(self.command, dtype=np.float64),
-                self.joint_pos() - self.default_joint_pos,
-                self.joint_vel() * 0.05,
-                self.last_action,
-            ],
-            axis=0,
-        ).astype(np.float32)
+    def build_observation_terms(self) -> list[np.ndarray]:
+        return [
+            (self.base_ang_vel() * 0.2).astype(np.float32),
+            _projected_gravity(self.base_quat()).astype(np.float32),
+            np.asarray(self.command, dtype=np.float32),
+            (self.joint_pos() - self.default_joint_pos).astype(np.float32),
+            (self.joint_vel() * 0.05).astype(np.float32),
+            self.last_action.astype(np.float32),
+        ]
+
+    def build_observation(self, terms: list[np.ndarray] | None = None) -> np.ndarray:
+        if terms is None:
+            terms = self.build_observation_terms()
+        obs = np.concatenate(terms, axis=0).astype(np.float32)
         if obs.shape[0] != self.num_actor_obs:
             raise RuntimeError(f"Observation dim mismatch: got {obs.shape[0]}, expected {self.num_actor_obs}.")
         return obs
 
-    def update_history(self, obs: np.ndarray) -> np.ndarray:
-        if not self.history:
-            for _ in range(self.history_length):
-                self.history.append(obs.copy())
+    def update_history(self, terms: list[np.ndarray]) -> np.ndarray:
+        if not self.history_terms:
+            self.history_terms = [deque(maxlen=self.history_length) for _ in terms]
+            for term_buffer, term in zip(self.history_terms, terms):
+                for _ in range(self.history_length):
+                    term_buffer.append(term.copy())
         else:
-            self.history.append(obs.copy())
-        history = np.concatenate(list(self.history), axis=0).astype(np.float32)
+            for term_buffer, term in zip(self.history_terms, terms):
+                term_buffer.append(term.copy())
+        if self.args.history_layout == "term_major":
+            # IsaacLab applies history to each observation term before concatenating the group.
+            # CENet sees [term0_history, term1_history, ...], not [frame0_obs, frame1_obs, ...].
+            history = np.concatenate(
+                [np.concatenate(list(term_buffer), axis=0) for term_buffer in self.history_terms],
+                axis=0,
+            ).astype(np.float32)
+        else:
+            frames = []
+            for index in range(self.history_length):
+                frames.append(np.concatenate([term_buffer[index] for term_buffer in self.history_terms], axis=0))
+            history = np.concatenate(frames, axis=0).astype(np.float32)
         if history.shape[0] != self.num_history_obs:
             raise RuntimeError(f"History dim mismatch: got {history.shape[0]}, expected {self.num_history_obs}.")
         return history
@@ -489,8 +505,9 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
 
             step_start = time.time()
             controller.poll(sim.command)
-            obs = sim.build_observation()
-            history = sim.update_history(obs)
+            obs_terms = sim.build_observation_terms()
+            obs = sim.build_observation(obs_terms)
+            history = sim.update_history(obs_terms)
             with torch.inference_mode():
                 action_tensor = policy(
                     torch.from_numpy(obs).unsqueeze(0).to(device),
@@ -596,6 +613,14 @@ def main():
         help="Joint order used for policy observations/actions. metadata is the exported order; type_major tests roll/pitch/knee grouped by joint type.",
     )
     parser.add_argument(
+        "--history_layout",
+        "--history-layout",
+        dest="history_layout",
+        choices=("term_major", "frame_major"),
+        default="term_major",
+        help="CENet history layout. term_major matches IsaacLab observation history; frame_major is kept for ablation.",
+    )
+    parser.add_argument(
         "--actuator_mode",
         "--actuator-mode",
         dest="actuator_mode",
@@ -644,6 +669,7 @@ def main():
     print(
         "[INFO] Sim2sim control: "
         f"terrain={args.terrain}, actuator_mode={sim.actuator_mode}, joint_order={args.joint_order}, "
+        f"history_layout={args.history_layout}, "
         f"dt={sim.sim_dt}, decimation={sim.decimation}, "
         f"kp={sim.kp:.4f}, kd={sim.kd:.4f}, effort={sim.effort_limit:.2f}, "
         f"armature={sim.armature:.4f}, joint_friction={sim.joint_friction:.4f}, "

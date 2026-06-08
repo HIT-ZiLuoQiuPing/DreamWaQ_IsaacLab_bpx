@@ -19,6 +19,8 @@ import torch
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_XML = _PROJECT_ROOT / "assets" / "BPX" / "mujoco" / "bpx.xml"
+LEG_PREFIXES = ("fl", "fr", "hl", "hr")
+JOINT_SUFFIXES = ("hip_roll_joint", "hip_pitch_joint", "knee_joint")
 
 
 def _load_mujoco():
@@ -195,6 +197,16 @@ def _sensor_slice(mujoco, model, data, name: str) -> np.ndarray:
     return np.array(data.sensordata[start : start + dim], dtype=np.float64)
 
 
+def _joint_order(metadata_joint_names: list[str], order: str) -> list[str]:
+    if order == "metadata":
+        return list(metadata_joint_names)
+    if order == "type_major":
+        return [f"{leg}_{suffix}" for suffix in JOINT_SUFFIXES for leg in LEG_PREFIXES]
+    if order == "alphabetical":
+        return sorted(metadata_joint_names)
+    raise ValueError(f"Unsupported joint order: {order}")
+
+
 class BpxMujocoSim:
     def __init__(self, mujoco, model, metadata: dict, args):
         self.mujoco = mujoco
@@ -203,9 +215,15 @@ class BpxMujocoSim:
         self.metadata = metadata
         self.args = args
 
-        self.joint_names = list(metadata["joint_names"])
-        self.default_joint_pos = np.asarray(metadata["default_joint_pos"], dtype=np.float64)
-        self.action_scale = np.asarray(metadata["action_scale"], dtype=np.float64) * args.action_scale_multiplier
+        metadata_joint_names = list(metadata["joint_names"])
+        self.joint_names = _joint_order(metadata_joint_names, args.joint_order)
+        default_by_name = dict(zip(metadata_joint_names, metadata["default_joint_pos"]))
+        scale_by_name = dict(zip(metadata_joint_names, metadata["action_scale"]))
+        self.default_joint_pos = np.asarray([default_by_name[name] for name in self.joint_names], dtype=np.float64)
+        self.action_scale = (
+            np.asarray([scale_by_name[name] for name in self.joint_names], dtype=np.float64)
+            * args.action_scale_multiplier
+        )
         self.action_sign = np.ones_like(self.action_scale)
         for index, name in enumerate(self.joint_names):
             if args.flip_hip_roll and name.endswith("_hip_roll_joint"):
@@ -261,6 +279,9 @@ class BpxMujocoSim:
         self.target_high = self.joint_range[:, 1] - args.joint_limit_margin
         self.model.dof_armature[self.joint_qvel_addr] = self.armature
         self.model.dof_frictionloss[self.joint_qvel_addr] = self.joint_friction
+        self.actuator_mode = args.actuator_mode
+        if self.actuator_mode == "position":
+            self._configure_position_actuators()
 
         self.reset()
 
@@ -315,19 +336,44 @@ class BpxMujocoSim:
             raise RuntimeError(f"History dim mismatch: got {history.shape[0]}, expected {self.num_history_obs}.")
         return history
 
+    def _configure_position_actuators(self):
+        """Match mjlab's BuiltinPositionActuatorCfg on top of the BPX motor XML."""
+
+        for actuator_id, joint_id in zip(self.actuator_ids, self.joint_ids):
+            self.model.actuator_dyntype[actuator_id] = self.mujoco.mjtDyn.mjDYN_NONE
+            self.model.actuator_gaintype[actuator_id] = self.mujoco.mjtGain.mjGAIN_FIXED
+            self.model.actuator_biastype[actuator_id] = self.mujoco.mjtBias.mjBIAS_AFFINE
+            self.model.actuator_gainprm[actuator_id, :] = 0.0
+            self.model.actuator_biasprm[actuator_id, :] = 0.0
+            self.model.actuator_gainprm[actuator_id, 0] = self.kp
+            self.model.actuator_biasprm[actuator_id, 1] = -self.kp
+            self.model.actuator_biasprm[actuator_id, 2] = -self.kd
+            self.model.actuator_ctrllimited[actuator_id] = False
+            self.model.actuator_forcelimited[actuator_id] = True
+            self.model.actuator_forcerange[actuator_id, :] = [-self.effort_limit, self.effort_limit]
+            joint_low, joint_high = self.model.jnt_range[joint_id]
+            delta = self.effort_limit / max(self.kp, 1.0e-6)
+            self.model.actuator_ctrlrange[actuator_id, :] = [joint_low - delta, joint_high + delta]
+
     def action_target(self, action: np.ndarray) -> np.ndarray:
-        return np.clip(self.default_joint_pos + (action * self.action_sign) * self.action_scale, self.target_low, self.target_high)
+        target = self.default_joint_pos + (action * self.action_sign) * self.action_scale
+        if self.args.clip_targets:
+            target = np.clip(target, self.target_low, self.target_high)
+        return target
 
     def apply_action(self, action: np.ndarray) -> bool:
         if not np.all(np.isfinite(action)):
             return False
         target = self.action_target(action)
         for _ in range(self.decimation):
-            joint_pos = self.joint_pos()
-            joint_vel = self.joint_vel()
-            torque = self.kp * (target - joint_pos) - self.kd * joint_vel
-            torque = np.clip(torque, -self.effort_limit, self.effort_limit)
-            self.data.ctrl[self.actuator_ids] = torque
+            if self.actuator_mode == "position":
+                self.data.ctrl[self.actuator_ids] = target
+            else:
+                joint_pos = self.joint_pos()
+                joint_vel = self.joint_vel()
+                torque = self.kp * (target - joint_pos) - self.kd * joint_vel
+                torque = np.clip(torque, -self.effort_limit, self.effort_limit)
+                self.data.ctrl[self.actuator_ids] = torque
             self.mujoco.mj_step(self.model, self.data)
             if not np.all(np.isfinite(self.data.qpos)) or not np.all(np.isfinite(self.data.qvel)):
                 return False
@@ -541,6 +587,30 @@ def main():
     parser.add_argument("--max_base_height", "--max-base-height", dest="max_base_height", type=float, default=1.5)
     parser.add_argument("--max_qvel", "--max-qvel", dest="max_qvel", type=float, default=80.0)
     parser.add_argument("--disable_safety_reset", "--disable-safety-reset", dest="disable_safety_reset", action="store_true", default=False)
+    parser.add_argument(
+        "--joint_order",
+        "--joint-order",
+        dest="joint_order",
+        choices=("metadata", "type_major", "alphabetical"),
+        default="metadata",
+        help="Joint order used for policy observations/actions. metadata is the exported order; type_major tests roll/pitch/knee grouped by joint type.",
+    )
+    parser.add_argument(
+        "--actuator_mode",
+        "--actuator-mode",
+        dest="actuator_mode",
+        choices=("position", "torque_pd"),
+        default="position",
+        help="MuJoCo actuator mode. position matches mjlab BuiltinPositionActuatorCfg; torque_pd keeps the older external PD path.",
+    )
+    parser.add_argument(
+        "--clip_targets",
+        "--clip-targets",
+        dest="clip_targets",
+        action="store_true",
+        default=False,
+        help="Clip position targets to joint limits. Disabled by default to match mjlab position actuators.",
+    )
     parser.add_argument("--flip_hip_roll", "--flip-hip-roll", dest="flip_hip_roll", action="store_true", default=False)
     parser.add_argument("--flip_hip_pitch", "--flip-hip-pitch", dest="flip_hip_pitch", action="store_true", default=False)
     parser.add_argument("--flip_knee", "--flip-knee", dest="flip_knee", action="store_true", default=False)
@@ -573,12 +643,14 @@ def main():
     print(f"[INFO] Loaded MuJoCo XML: {pathlib.Path(args.xml).expanduser().resolve()}")
     print(
         "[INFO] Sim2sim control: "
-        f"terrain={args.terrain}, dt={sim.sim_dt}, decimation={sim.decimation}, "
+        f"terrain={args.terrain}, actuator_mode={sim.actuator_mode}, joint_order={args.joint_order}, "
+        f"dt={sim.sim_dt}, decimation={sim.decimation}, "
         f"kp={sim.kp:.4f}, kd={sim.kd:.4f}, effort={sim.effort_limit:.2f}, "
         f"armature={sim.armature:.4f}, joint_friction={sim.joint_friction:.4f}, "
         f"action_scale_mean={float(np.mean(sim.action_scale)):.4f}, "
-        f"clip_actions={args.clip_actions:.2f}"
+        f"clip_actions={args.clip_actions:.2f}, clip_targets={args.clip_targets}"
     )
+    print(f"[INFO] Joint order: {sim.joint_names}", flush=True)
     if args.flip_hip_roll or args.flip_hip_pitch or args.flip_knee:
         print(
             "[INFO] Action sign flips: "

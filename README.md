@@ -70,6 +70,14 @@ Then inspect policy observations and actions:
 
 If the observation looks reasonable but the motion folds the legs in the wrong direction, test joint sign hypotheses one at a time, for example `--flip-hip-pitch`, `--flip-knee`, or both.
 
+The MuJoCo player defaults to `--actuator-mode position`, which matches mjlab's `BuiltinPositionActuatorCfg`: the policy outputs position targets and MuJoCo applies the built-in actuator force limit. The old external torque-PD path is still available for comparison:
+
+```bash
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --actuator-mode torque_pd --stand-only --duration 10 --real-time --debug-obs
+```
+
+If you suspect the exported action/joint order is wrong, compare `--joint-order metadata`, `--joint-order type_major`, and `--joint-order alphabetical`.
+
 A simple stair scene is also available:
 
 ```bash

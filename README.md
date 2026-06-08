@@ -56,6 +56,20 @@ Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` 
 ./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive --command-x 0.3 --clip-actions 1.5 --action-scale-multiplier 0.7
 ```
 
+If the robot stays stable but immediately falls over or crouches, first verify the MuJoCo model and PD layer without the policy:
+
+```bash
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --stand-only --duration 10 --real-time --debug-obs
+```
+
+Then inspect policy observations and actions:
+
+```bash
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --command-x 0.3 --clip-actions 1.5 --action-scale-multiplier 0.7 --debug-obs --real-time
+```
+
+If the observation looks reasonable but the motion folds the legs in the wrong direction, test joint sign hypotheses one at a time, for example `--flip-hip-pitch`, `--flip-knee`, or both.
+
 A simple stair scene is also available:
 
 ```bash

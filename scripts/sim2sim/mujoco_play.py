@@ -206,6 +206,14 @@ class BpxMujocoSim:
         self.joint_names = list(metadata["joint_names"])
         self.default_joint_pos = np.asarray(metadata["default_joint_pos"], dtype=np.float64)
         self.action_scale = np.asarray(metadata["action_scale"], dtype=np.float64) * args.action_scale_multiplier
+        self.action_sign = np.ones_like(self.action_scale)
+        for index, name in enumerate(self.joint_names):
+            if args.flip_hip_roll and name.endswith("_hip_roll_joint"):
+                self.action_sign[index] *= -1.0
+            if args.flip_hip_pitch and name.endswith("_hip_pitch_joint"):
+                self.action_sign[index] *= -1.0
+            if args.flip_knee and name.endswith("_knee_joint"):
+                self.action_sign[index] *= -1.0
         self.history_length = int(metadata["history_length"])
         self.num_actor_obs = int(metadata["num_actor_obs"])
         self.num_history_obs = int(metadata["num_history_obs"])
@@ -307,11 +315,13 @@ class BpxMujocoSim:
             raise RuntimeError(f"History dim mismatch: got {history.shape[0]}, expected {self.num_history_obs}.")
         return history
 
+    def action_target(self, action: np.ndarray) -> np.ndarray:
+        return np.clip(self.default_joint_pos + (action * self.action_sign) * self.action_scale, self.target_low, self.target_high)
+
     def apply_action(self, action: np.ndarray) -> bool:
         if not np.all(np.isfinite(action)):
             return False
-        target = self.default_joint_pos + action * self.action_scale
-        target = np.clip(target, self.target_low, self.target_high)
+        target = self.action_target(action)
         for _ in range(self.decimation):
             joint_pos = self.joint_pos()
             joint_vel = self.joint_vel()
@@ -331,6 +341,32 @@ class BpxMujocoSim:
         quat = np.asarray(self.data.qpos[3:7], dtype=np.float64)
         linear_world = np.asarray(self.data.qvel[0:3], dtype=np.float64)
         return _quat_to_matrix(quat).T @ linear_world
+
+    def debug_summary(self, obs: np.ndarray, action: np.ndarray | None = None) -> str:
+        joint_pos = self.joint_pos()
+        joint_vel = self.joint_vel()
+        lines = [
+            f"base_z={self.data.qpos[2]:.4f}",
+            f"base_ang_vel={obs[0:3].tolist()}",
+            f"projected_gravity={obs[3:6].tolist()}",
+            f"command={obs[6:9].tolist()}",
+            f"joint_pos_rel={obs[9:21].tolist()}",
+            f"joint_vel_scaled={obs[21:33].tolist()}",
+            f"last_action={obs[33:45].tolist()}",
+            f"joint_pos={joint_pos.tolist()}",
+            f"joint_vel={joint_vel.tolist()}",
+        ]
+        if action is not None:
+            target = self.action_target(action)
+            lines.extend(
+                [
+                    f"raw_or_clipped_action={action.tolist()}",
+                    f"action_sign={self.action_sign.tolist()}",
+                    f"target_joint_pos={target.tolist()}",
+                    f"target_minus_joint={((target - joint_pos).tolist())}",
+                ]
+            )
+        return "\n".join(f"[DEBUG] {line}" for line in lines)
 
 
 def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
@@ -355,6 +391,48 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
                 print("[WARN] MuJoCo became unstable during stand warmup; resetting.", flush=True)
                 sim.reset()
                 break
+        if args.debug_obs:
+            obs = sim.build_observation()
+            print(sim.debug_summary(obs, zero_action), flush=True)
+
+    if args.stand_only:
+        print("[INFO] Running stand-only PD test. Policy will not be used.", flush=True)
+        zero_action = np.zeros(sim.num_actions, dtype=np.float64)
+        while True:
+            if viewer is not None and not viewer.is_running():
+                break
+            if args.duration > 0.0 and sim.data.time >= args.duration:
+                break
+            step_start = time.time()
+            ok = sim.apply_action(zero_action)
+            if viewer is not None:
+                viewer.sync()
+            if not ok:
+                reset_count += 1
+                print(f"[WARN] MuJoCo unstable during stand-only; resetting (reset_count={reset_count}).", flush=True)
+                if args.disable_safety_reset:
+                    break
+                sim.reset()
+            if sim.data.time - last_print >= args.print_interval:
+                obs = sim.build_observation()
+                print(
+                    "[INFO] "
+                    f"t={sim.data.time:6.2f}s stand-only height={sim.data.qpos[2]: .3f} "
+                    f"joint_vel_abs={np.mean(np.abs(sim.joint_vel())): .4f}",
+                    flush=True,
+                )
+                if args.debug_obs:
+                    print(sim.debug_summary(obs, zero_action), flush=True)
+                last_print = sim.data.time
+            if args.real_time:
+                sleep_time = control_dt - (time.time() - step_start)
+                if sleep_time > 0.0:
+                    time.sleep(sleep_time)
+        print(
+            f"[INFO] MuJoCo stand-only finished at t={sim.data.time:.2f}s, "
+            f"wall={time.time() - start_wall:.2f}s, resets={reset_count}."
+        )
+        return
 
     with TerminalCommandController(args.interactive, args.command_step, args.yaw_step) as controller:
         while True:
@@ -405,6 +483,8 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
                     f"height={sim.data.qpos[2]: .3f}",
                     flush=True,
                 )
+                if args.debug_obs:
+                    print(sim.debug_summary(obs, action), flush=True)
                 last_print = sim.data.time
 
             if args.real_time:
@@ -438,6 +518,8 @@ def main():
     parser.add_argument("--duration", type=float, default=30.0, help="Simulation duration in seconds. Use 0 to run forever.")
     parser.add_argument("--headless", action="store_true", default=False, help="Do not open the MuJoCo viewer.")
     parser.add_argument("--real_time", "--real-time", dest="real_time", action="store_true", default=False)
+    parser.add_argument("--stand_only", "--stand-only", dest="stand_only", action="store_true", default=False)
+    parser.add_argument("--debug_obs", "--debug-obs", dest="debug_obs", action="store_true", default=False)
     parser.add_argument("--device", default="cpu", help="Torch device for policy inference.")
     parser.add_argument("--sim_dt", "--sim-dt", dest="sim_dt", type=float, default=None)
     parser.add_argument("--decimation", type=int, default=None)
@@ -459,6 +541,9 @@ def main():
     parser.add_argument("--max_base_height", "--max-base-height", dest="max_base_height", type=float, default=1.5)
     parser.add_argument("--max_qvel", "--max-qvel", dest="max_qvel", type=float, default=80.0)
     parser.add_argument("--disable_safety_reset", "--disable-safety-reset", dest="disable_safety_reset", action="store_true", default=False)
+    parser.add_argument("--flip_hip_roll", "--flip-hip-roll", dest="flip_hip_roll", action="store_true", default=False)
+    parser.add_argument("--flip_hip_pitch", "--flip-hip-pitch", dest="flip_hip_pitch", action="store_true", default=False)
+    parser.add_argument("--flip_knee", "--flip-knee", dest="flip_knee", action="store_true", default=False)
     parser.add_argument(
         "--action_scale_multiplier",
         "--action-scale-multiplier",
@@ -494,6 +579,12 @@ def main():
         f"action_scale_mean={float(np.mean(sim.action_scale)):.4f}, "
         f"clip_actions={args.clip_actions:.2f}"
     )
+    if args.flip_hip_roll or args.flip_hip_pitch or args.flip_knee:
+        print(
+            "[INFO] Action sign flips: "
+            f"hip_roll={args.flip_hip_roll}, hip_pitch={args.flip_hip_pitch}, knee={args.flip_knee}",
+            flush=True,
+        )
 
     if args.headless:
         _run_loop(policy, sim, args, viewer=None)

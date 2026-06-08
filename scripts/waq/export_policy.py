@@ -213,6 +213,8 @@ def main():
             "stiffness": float(BPX_STIFFNESS),
             "damping": float(BPX_DAMPING),
             "effort_limit": float(BPX_EFFORT_LIMIT),
+            "armature": float(BPX_ARMATURE),
+            "joint_friction": 0.01,
             "policy_dt": 0.02,
             "sim_dt": 0.005,
             "decimation": 4,
@@ -239,7 +241,8 @@ def main():
     print(
         "[INFO] Control: "
         f"kp={BPX_STIFFNESS:.4f}, kd={BPX_DAMPING:.4f}, "
-        f"effort={BPX_EFFORT_LIMIT:.2f}, action_scale={next(iter(BPX_ACTION_SCALE.values())):.4f}"
+        f"effort={BPX_EFFORT_LIMIT:.2f}, armature={BPX_ARMATURE:.4f}, "
+        f"joint_friction=0.0100, action_scale={next(iter(BPX_ACTION_SCALE.values())):.4f}"
     )
 
 

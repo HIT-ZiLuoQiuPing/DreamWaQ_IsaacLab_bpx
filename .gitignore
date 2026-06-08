@@ -8,6 +8,7 @@ __pycache__/
 logs/
 *.pt
 events.out.tfevents.*
+MUJOCO_LOG.TXT
 
 # Local editor and OS noise
 .DS_Store

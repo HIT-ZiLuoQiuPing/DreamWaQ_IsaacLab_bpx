@@ -218,6 +218,10 @@ class BpxMujocoSim:
         self.kp = float(control["stiffness"]) * args.kp_multiplier
         self.kd = float(control["damping"]) * args.kd_multiplier
         self.effort_limit = float(control["effort_limit"])
+        self.armature = float(args.armature if args.armature is not None else control.get("armature", 0.005))
+        self.joint_friction = float(
+            args.joint_friction if args.joint_friction is not None else control.get("joint_friction", 0.01)
+        )
         self.decimation = int(args.decimation or control.get("decimation", 4))
         self.sim_dt = float(args.sim_dt or control.get("sim_dt", 0.005))
         self.model.opt.timestep = self.sim_dt
@@ -225,18 +229,16 @@ class BpxMujocoSim:
         if len(self.joint_names) != self.num_actions:
             raise ValueError("Metadata joint count does not match action dimension.")
 
-        self.joint_qpos_addr = np.array(
+        self.joint_ids = np.array(
             [
-                self.model.jnt_qposadr[_name_id(mujoco, model, mujoco.mjtObj.mjOBJ_JOINT, name)]
+                _name_id(mujoco, model, mujoco.mjtObj.mjOBJ_JOINT, name)
                 for name in self.joint_names
             ],
             dtype=np.int64,
         )
+        self.joint_qpos_addr = np.array([self.model.jnt_qposadr[joint_id] for joint_id in self.joint_ids], dtype=np.int64)
         self.joint_qvel_addr = np.array(
-            [
-                self.model.jnt_dofadr[_name_id(mujoco, model, mujoco.mjtObj.mjOBJ_JOINT, name)]
-                for name in self.joint_names
-            ],
+            [self.model.jnt_dofadr[joint_id] for joint_id in self.joint_ids],
             dtype=np.int64,
         )
         self.actuator_ids = np.array(
@@ -246,13 +248,16 @@ class BpxMujocoSim:
             ],
             dtype=np.int64,
         )
+        self.joint_range = np.asarray(self.model.jnt_range[self.joint_ids], dtype=np.float64)
+        self.target_low = self.joint_range[:, 0] + args.joint_limit_margin
+        self.target_high = self.joint_range[:, 1] - args.joint_limit_margin
+        self.model.dof_armature[self.joint_qvel_addr] = self.armature
+        self.model.dof_frictionloss[self.joint_qvel_addr] = self.joint_friction
 
         self.reset()
 
     def reset(self):
-        self.data.qpos[:] = 0.0
-        self.data.qvel[:] = 0.0
-        self.data.ctrl[:] = 0.0
+        self.mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[0:3] = [0.0, 0.0, float(self.metadata.get("base_height", 0.42))]
         self.data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
         self.data.qpos[self.joint_qpos_addr] = self.default_joint_pos
@@ -302,8 +307,11 @@ class BpxMujocoSim:
             raise RuntimeError(f"History dim mismatch: got {history.shape[0]}, expected {self.num_history_obs}.")
         return history
 
-    def apply_action(self, action: np.ndarray):
+    def apply_action(self, action: np.ndarray) -> bool:
+        if not np.all(np.isfinite(action)):
+            return False
         target = self.default_joint_pos + action * self.action_scale
+        target = np.clip(target, self.target_low, self.target_high)
         for _ in range(self.decimation):
             joint_pos = self.joint_pos()
             joint_vel = self.joint_vel()
@@ -311,6 +319,13 @@ class BpxMujocoSim:
             torque = np.clip(torque, -self.effort_limit, self.effort_limit)
             self.data.ctrl[self.actuator_ids] = torque
             self.mujoco.mj_step(self.model, self.data)
+            if not np.all(np.isfinite(self.data.qpos)) or not np.all(np.isfinite(self.data.qvel)):
+                return False
+            if self.data.qpos[2] < self.args.min_base_height or self.data.qpos[2] > self.args.max_base_height:
+                return False
+            if np.max(np.abs(self.data.qvel)) > self.args.max_qvel:
+                return False
+        return True
 
     def measured_velocity(self) -> np.ndarray:
         quat = np.asarray(self.data.qpos[3:7], dtype=np.float64)
@@ -326,6 +341,20 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
     start_wall = time.time()
     last_print = 0.0
     step = 0
+    reset_count = 0
+
+    warmup_steps = int(max(args.stand_warmup, 0.0) / max(control_dt, 1.0e-6))
+    if warmup_steps > 0:
+        print(f"[INFO] Standing warmup for {warmup_steps} policy steps ({args.stand_warmup:.2f}s).", flush=True)
+        zero_action = np.zeros(sim.num_actions, dtype=np.float64)
+        for _ in range(warmup_steps):
+            ok = sim.apply_action(zero_action)
+            if viewer is not None:
+                viewer.sync()
+            if not ok:
+                print("[WARN] MuJoCo became unstable during stand warmup; resetting.", flush=True)
+                sim.reset()
+                break
 
     with TerminalCommandController(args.interactive, args.command_step, args.yaw_step) as controller:
         while True:
@@ -347,7 +376,19 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
             if args.clip_actions > 0.0:
                 action = np.clip(action, -args.clip_actions, args.clip_actions)
             sim.last_action = action
-            sim.apply_action(action)
+            ok = sim.apply_action(action)
+            if not ok:
+                reset_count += 1
+                print(
+                    "[WARN] MuJoCo unstable state detected; resetting "
+                    f"(reset_count={reset_count}, t={sim.data.time:.3f}s).",
+                    flush=True,
+                )
+                if args.disable_safety_reset:
+                    break
+                sim.reset()
+                last_print = 0.0
+                continue
 
             if viewer is not None:
                 viewer.sync()
@@ -360,6 +401,7 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
                     f"cmd=({_format_command(sim.command)}) "
                     f"vel_x={vel[0]: .3f} vel_y={vel[1]: .3f} "
                     f"action_mean_abs={np.mean(np.abs(action)): .3f} "
+                    f"action_max_abs={np.max(np.abs(action)): .3f} "
                     f"height={sim.data.qpos[2]: .3f}",
                     flush=True,
                 )
@@ -372,7 +414,10 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
                     time.sleep(sleep_time)
             step += 1
 
-    print(f"[INFO] MuJoCo sim2sim finished at t={sim.data.time:.2f}s, wall={time.time() - start_wall:.2f}s.")
+    print(
+        f"[INFO] MuJoCo sim2sim finished at t={sim.data.time:.2f}s, "
+        f"wall={time.time() - start_wall:.2f}s, resets={reset_count}."
+    )
 
 
 def main():
@@ -396,9 +441,24 @@ def main():
     parser.add_argument("--device", default="cpu", help="Torch device for policy inference.")
     parser.add_argument("--sim_dt", "--sim-dt", dest="sim_dt", type=float, default=None)
     parser.add_argument("--decimation", type=int, default=None)
-    parser.add_argument("--clip_actions", "--clip-actions", dest="clip_actions", type=float, default=0.0)
+    parser.add_argument(
+        "--clip_actions",
+        "--clip-actions",
+        dest="clip_actions",
+        type=float,
+        default=2.0,
+        help="Raw policy action safety clip. Use 0 to disable.",
+    )
     parser.add_argument("--kp_multiplier", "--kp-multiplier", dest="kp_multiplier", type=float, default=1.0)
     parser.add_argument("--kd_multiplier", "--kd-multiplier", dest="kd_multiplier", type=float, default=1.0)
+    parser.add_argument("--armature", type=float, default=None, help="Override actuated joint armature.")
+    parser.add_argument("--joint_friction", "--joint-friction", dest="joint_friction", type=float, default=None)
+    parser.add_argument("--joint_limit_margin", "--joint-limit-margin", dest="joint_limit_margin", type=float, default=0.03)
+    parser.add_argument("--stand_warmup", "--stand-warmup", dest="stand_warmup", type=float, default=0.5)
+    parser.add_argument("--min_base_height", "--min-base-height", dest="min_base_height", type=float, default=0.06)
+    parser.add_argument("--max_base_height", "--max-base-height", dest="max_base_height", type=float, default=1.5)
+    parser.add_argument("--max_qvel", "--max-qvel", dest="max_qvel", type=float, default=80.0)
+    parser.add_argument("--disable_safety_reset", "--disable-safety-reset", dest="disable_safety_reset", action="store_true", default=False)
     parser.add_argument(
         "--action_scale_multiplier",
         "--action-scale-multiplier",
@@ -430,7 +490,9 @@ def main():
         "[INFO] Sim2sim control: "
         f"terrain={args.terrain}, dt={sim.sim_dt}, decimation={sim.decimation}, "
         f"kp={sim.kp:.4f}, kd={sim.kd:.4f}, effort={sim.effort_limit:.2f}, "
-        f"action_scale_mean={float(np.mean(sim.action_scale)):.4f}"
+        f"armature={sim.armature:.4f}, joint_friction={sim.joint_friction:.4f}, "
+        f"action_scale_mean={float(np.mean(sim.action_scale)):.4f}, "
+        f"clip_actions={args.clip_actions:.2f}"
     )
 
     if args.headless:

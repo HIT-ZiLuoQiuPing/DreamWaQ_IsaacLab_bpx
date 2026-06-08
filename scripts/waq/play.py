@@ -71,7 +71,7 @@ parser.add_argument(
     "--terrain_profile",
     type=str,
     default="rough",
-    choices=("mixed", "flat", "rough", "slope", "slope_inv", "boxes", "stairs", "stairs_inv"),
+    choices=("mixed", "flat", "rough", "slope", "slope_inv", "boxes", "stairs", "stairs_inv", "wave"),
     help="Terrain profile generated for play.",
 )
 parser.add_argument("--terrain_level", type=int, default=5, help="Exact generated terrain level for play.")
@@ -79,6 +79,8 @@ parser.add_argument("--terrain_rows", type=int, default=10, help="Terrain rows g
 parser.add_argument("--terrain_cols", type=int, default=4, help="Terrain columns generated for play.")
 parser.add_argument("--follow_camera", action="store_true", default=False, help="Update the camera to follow env 0.")
 parser.add_argument("--camera_distance", type=float, default=3.0, help="Distance used by --follow_camera.")
+parser.add_argument("--camera_height", type=float, default=0.75, help="Height offset used by --follow_camera.")
+parser.add_argument("--camera_target_height", type=float, default=0.12, help="Look-at height offset used by --follow_camera.")
 parser.add_argument(
     "--no_velocity_arrows",
     action="store_true",
@@ -135,6 +137,7 @@ import gymnasium as gym
 import torch
 
 import isaaclab_tasks  # noqa: F401
+import isaaclab.terrains as terrain_gen
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -181,6 +184,7 @@ _TERRAIN_PROFILE_TO_KEY = {
     "boxes": "boxes",
     "stairs": "pyramid_stairs",
     "stairs_inv": "pyramid_stairs_inv",
+    "wave": "wave_terrain",
 }
 
 
@@ -194,6 +198,13 @@ def _configure_play_terrain_cfg(env_cfg, profile: str, rows: int, cols: int):
     terrain_generator.num_cols = max(cols, 1)
     if profile != "mixed":
         terrain_key = _TERRAIN_PROFILE_TO_KEY[profile]
+        if terrain_key == "boxes" and terrain_key not in terrain_generator.sub_terrains:
+            terrain_generator.sub_terrains[terrain_key] = terrain_gen.MeshRandomGridTerrainCfg(
+                proportion=1.0,
+                grid_width=0.45,
+                grid_height_range=(0.04, 0.18),
+                platform_width=2.0,
+            )
         terrain_cfg = terrain_generator.sub_terrains[terrain_key]
         terrain_cfg.proportion = 1.0
         terrain_generator.sub_terrains = {terrain_key: terrain_cfg}
@@ -323,16 +334,16 @@ class _TerminalCommandController:
         return changed
 
 
-def _update_follow_camera(env, distance: float):
+def _update_follow_camera(env, distance: float, height: float, target_height: float):
     try:
         robot = env.unwrapped.scene["robot"]
         root_pos = robot.data.root_pos_w[0].detach().cpu()
         eye = (
             float(root_pos[0] - distance),
             float(root_pos[1] - 0.65 * distance),
-            float(root_pos[2] + 1.2),
+            float(root_pos[2] + height),
         )
-        target = (float(root_pos[0]), float(root_pos[1]), float(root_pos[2] + 0.25))
+        target = (float(root_pos[0]), float(root_pos[1]), float(root_pos[2] + target_height))
         env.unwrapped.sim.set_camera_view(eye=eye, target=target)
     except (AttributeError, KeyError, IndexError, RuntimeError):
         return
@@ -417,7 +428,12 @@ def main():
                 else:
                     history = _groups(infos)["cenet"]
             if args_cli.follow_camera:
-                _update_follow_camera(env, args_cli.camera_distance)
+                _update_follow_camera(
+                    env,
+                    args_cli.camera_distance,
+                    args_cli.camera_height,
+                    args_cli.camera_target_height,
+                )
             step += 1
             if args_cli.video and step >= args_cli.video_length:
                 break

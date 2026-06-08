@@ -46,7 +46,7 @@ class DreamWaQConfig:
     experiment_name: str = "bpx_waq_rough"
     run_name: str = ""
     seed: int = 42
-    clip_actions: float | None = None
+    clip_actions: float | None = 1.4
     policy: DreamWaQPolicyCfg = field(default_factory=DreamWaQPolicyCfg)
     algorithm: DreamWaQPpoCfg = field(default_factory=DreamWaQPpoCfg)
 

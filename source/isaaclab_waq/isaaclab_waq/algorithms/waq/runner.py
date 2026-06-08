@@ -135,11 +135,15 @@ class DreamWaQRunner:
             timeout_count = 0
             iter_completed_rewards: list[float] = []
             iter_completed_lengths: list[float] = []
+            iter_timeout_lengths: list[float] = []
+            iter_terminated_lengths: list[float] = []
             iter_reward_terms: dict[str, float] = {}
             iter_reward_term_count = 0
             action_abs_sum = 0.0
             action_mean_abs_sum = 0.0
             action_noise_abs_sum = 0.0
+            action_clip_fraction_sum = 0.0
+            action_clipped_abs_sum = 0.0
             command_x_sum = 0.0
             velocity_x_sum = 0.0
             rollout_stat_count = 0
@@ -156,6 +160,10 @@ class DreamWaQRunner:
                     action_abs_sum += float(actions.abs().mean().item())
                     action_mean_abs_sum += float(action_mean.abs().mean().item())
                     action_noise_abs_sum += float((actions - action_mean).abs().mean().item())
+                    if self.cfg.clip_actions is not None:
+                        clip_actions = float(self.cfg.clip_actions)
+                        action_clip_fraction_sum += float((actions.abs() > clip_actions).float().mean().item())
+                        action_clipped_abs_sum += float(actions.clamp(-clip_actions, clip_actions).abs().mean().item())
                     command = self._current_command()
                     if command is not None:
                         command_x_sum += float(command[:, 0].mean().item())
@@ -174,8 +182,10 @@ class DreamWaQRunner:
                     raw_rewards_for_logging = rewards.clone()
                     dones = dones.to(self.device).view(-1).bool()
                     done_count += int(dones.sum().item())
+                    time_outs_flat = None
                     if "time_outs" in infos:
                         time_outs = infos["time_outs"].to(self.device).view(-1, 1)
+                        time_outs_flat = time_outs.view(-1).bool()
                         timeout_count += int(time_outs.sum().item())
                         rewards += self.alg_cfg.gamma * torch.squeeze(values * time_outs, dim=1)
 
@@ -209,6 +219,17 @@ class DreamWaQRunner:
                         lenbuffer.extend(completed_lengths)
                         iter_completed_rewards.extend(completed_rewards)
                         iter_completed_lengths.extend(completed_lengths)
+                        if time_outs_flat is not None:
+                            done_timeouts = time_outs_flat[done_ids]
+                            completed_lengths_tensor = episode_lengths_before_step[done_ids]
+                            iter_timeout_lengths.extend(
+                                completed_lengths_tensor[done_timeouts].cpu().numpy().tolist()
+                            )
+                            iter_terminated_lengths.extend(
+                                completed_lengths_tensor[~done_timeouts].cpu().numpy().tolist()
+                            )
+                        else:
+                            iter_terminated_lengths.extend(completed_lengths)
                         cur_reward_sum[done_ids] = 0
 
                     obs = next_obs
@@ -226,9 +247,17 @@ class DreamWaQRunner:
                     "completed_episode_count": len(iter_completed_lengths),
                     "mean_completed_reward": self._mean_list(iter_completed_rewards),
                     "mean_completed_episode_length": self._mean_list(iter_completed_lengths),
+                    "timeout_episode_count": len(iter_timeout_lengths),
+                    "terminated_episode_count": len(iter_terminated_lengths),
+                    "mean_timeout_episode_length": self._mean_list(iter_timeout_lengths),
+                    "mean_terminated_episode_length": self._mean_list(iter_terminated_lengths),
                     "action_abs": action_abs_sum / max(rollout_stat_count, 1),
                     "action_mean_abs": action_mean_abs_sum / max(rollout_stat_count, 1),
                     "action_noise_abs": action_noise_abs_sum / max(rollout_stat_count, 1),
+                    "action_clip_fraction": action_clip_fraction_sum / max(rollout_stat_count, 1),
+                    "action_clipped_abs": action_clipped_abs_sum / max(rollout_stat_count, 1)
+                    if self.cfg.clip_actions is not None
+                    else 0.0,
                     "command_x": command_x_sum / max(rollout_stat_count, 1),
                     "velocity_x": velocity_x_sum / max(rollout_stat_count, 1),
                 }
@@ -534,9 +563,15 @@ class DreamWaQRunner:
         done_rate = float(rollout_stats.get("done_rate", 0.0) or 0.0)
         timeout_rate = float(rollout_stats.get("timeout_rate", 0.0) or 0.0)
         completed_episode_count = int(rollout_stats.get("completed_episode_count", 0) or 0)
+        timeout_episode_count = int(rollout_stats.get("timeout_episode_count", 0) or 0)
+        terminated_episode_count = int(rollout_stats.get("terminated_episode_count", 0) or 0)
+        mean_timeout_length = rollout_stats.get("mean_timeout_episode_length")
+        mean_terminated_length = rollout_stats.get("mean_terminated_episode_length")
         action_abs = float(rollout_stats.get("action_abs", 0.0) or 0.0)
         action_mean_abs = float(rollout_stats.get("action_mean_abs", 0.0) or 0.0)
         action_noise_abs = float(rollout_stats.get("action_noise_abs", 0.0) or 0.0)
+        action_clip_fraction = float(rollout_stats.get("action_clip_fraction", 0.0) or 0.0)
+        action_clipped_abs = float(rollout_stats.get("action_clipped_abs", 0.0) or 0.0)
         command_x = float(rollout_stats.get("command_x", 0.0) or 0.0)
         velocity_x = float(rollout_stats.get("velocity_x", 0.0) or 0.0)
         mean_reward = self._pick_metric(
@@ -589,9 +624,17 @@ class DreamWaQRunner:
             self.writer.add_scalar("Rollout/done_rate", done_rate, iteration)
             self.writer.add_scalar("Rollout/timeout_rate", timeout_rate, iteration)
             self.writer.add_scalar("Rollout/completed_episode_count", completed_episode_count, iteration)
+            self.writer.add_scalar("Rollout/timeout_episode_count", timeout_episode_count, iteration)
+            self.writer.add_scalar("Rollout/terminated_episode_count", terminated_episode_count, iteration)
+            if mean_timeout_length is not None:
+                self.writer.add_scalar("Rollout/mean_timeout_episode_length", mean_timeout_length, iteration)
+            if mean_terminated_length is not None:
+                self.writer.add_scalar("Rollout/mean_terminated_episode_length", mean_terminated_length, iteration)
             self.writer.add_scalar("Rollout/action_abs", action_abs, iteration)
             self.writer.add_scalar("Rollout/action_mean_abs", action_mean_abs, iteration)
             self.writer.add_scalar("Rollout/action_noise_abs", action_noise_abs, iteration)
+            self.writer.add_scalar("Rollout/action_clip_fraction", action_clip_fraction, iteration)
+            self.writer.add_scalar("Rollout/action_clipped_abs", action_clipped_abs, iteration)
             self.writer.add_scalar("Rollout/command_x", command_x, iteration)
             self.writer.add_scalar("Rollout/velocity_x", velocity_x, iteration)
             if len(rewbuffer) > 0:
@@ -634,9 +677,21 @@ class DreamWaQRunner:
                 self._line("Rollout/done_rate", f"{done_rate:.4f}"),
                 self._line("Rollout/timeout_rate", f"{timeout_rate:.4f}"),
                 self._line("Rollout/completed episodes", str(completed_episode_count)),
+                self._line("Rollout/timeout episodes", str(timeout_episode_count)),
+                self._line("Rollout/terminated episodes", str(terminated_episode_count)),
+                self._line(
+                    "Rollout/timeout length",
+                    f"{float(mean_timeout_length):.2f}" if mean_timeout_length is not None else "n/a",
+                ),
+                self._line(
+                    "Rollout/terminated length",
+                    f"{float(mean_terminated_length):.2f}" if mean_terminated_length is not None else "n/a",
+                ),
                 self._line("Rollout/action |mean|", f"{action_mean_abs:.4f}"),
                 self._line("Rollout/action |sample|", f"{action_abs:.4f}"),
                 self._line("Rollout/action |noise|", f"{action_noise_abs:.4f}"),
+                self._line("Rollout/action clip frac", f"{action_clip_fraction:.4f}"),
+                self._line("Rollout/action |clipped|", f"{action_clipped_abs:.4f}"),
                 self._line("Rollout/cmd_x vs vel_x", f"{command_x:.3f} / {velocity_x:.3f}"),
             ]
         )

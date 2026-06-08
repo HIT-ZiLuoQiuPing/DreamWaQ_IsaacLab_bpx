@@ -76,6 +76,24 @@ def base_height_above_terrain_l2(
     return torch.square(relative_height - target_height)
 
 
+def base_height_below_target_l2(
+    env: ManagerBasedRLEnv,
+    target_height: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize only root-link height below the target terrain-relative height."""
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    sensor = env.scene.sensors[sensor_cfg.name]
+    hits_z = sensor.data.ray_hits_w[..., 2]
+    fallback_height = asset.data.root_link_pos_w[:, 2].unsqueeze(1) - target_height
+    hits_z = torch.where(torch.isfinite(hits_z), hits_z, fallback_height)
+    terrain_height = torch.mean(hits_z, dim=1)
+    relative_height = asset.data.root_link_pos_w[:, 2] - terrain_height
+    return torch.square(torch.clamp(target_height - relative_height, min=0.0))
+
+
 def lin_vel_z_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize vertical root-link velocity."""
 

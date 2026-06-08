@@ -79,6 +79,18 @@ parser.add_argument("--terrain_rows", type=int, default=10, help="Terrain rows g
 parser.add_argument("--terrain_cols", type=int, default=4, help="Terrain columns generated for play.")
 parser.add_argument("--follow_camera", action="store_true", default=False, help="Update the camera to follow env 0.")
 parser.add_argument("--camera_distance", type=float, default=3.0, help="Distance used by --follow_camera.")
+parser.add_argument(
+    "--no_velocity_arrows",
+    action="store_true",
+    default=False,
+    help="Disable play velocity arrows. Green is command velocity, blue is measured base velocity.",
+)
+parser.add_argument(
+    "--velocity_arrow_scale",
+    type=float,
+    default=0.45,
+    help="Base marker scale for command/current velocity arrows.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -185,6 +197,18 @@ def _configure_play_terrain_cfg(env_cfg, profile: str, rows: int, cols: int):
         terrain_cfg = terrain_generator.sub_terrains[terrain_key]
         terrain_cfg.proportion = 1.0
         terrain_generator.sub_terrains = {terrain_key: terrain_cfg}
+
+
+def _configure_velocity_arrows(env_cfg, enabled: bool, marker_scale: float):
+    try:
+        command_cfg = env_cfg.commands.base_velocity
+        command_cfg.debug_vis = enabled
+        marker_scale = max(marker_scale, 0.05)
+        scale = (marker_scale, marker_scale, marker_scale)
+        command_cfg.goal_vel_visualizer_cfg.markers["arrow"].scale = scale
+        command_cfg.current_vel_visualizer_cfg.markers["arrow"].scale = scale
+    except AttributeError:
+        return
 
 
 def _force_play_terrain_origin(env, terrain_level: int | None, terrain_col: int = 0) -> bool:
@@ -318,6 +342,7 @@ def main():
     device = args_cli.device if args_cli.device is not None else "cuda:0"
     env_cfg = _parse_env_cfg(args_cli.task, device=device, num_envs=args_cli.num_envs)
     _configure_play_terrain_cfg(env_cfg, args_cli.terrain_profile, args_cli.terrain_rows, args_cli.terrain_cols)
+    _configure_velocity_arrows(env_cfg, not args_cli.no_velocity_arrows, args_cli.velocity_arrow_scale)
     env_cfg.scene.terrain.max_init_terrain_level = args_cli.terrain_level
     agent_cfg = _load_waq_cfg(args_cli.task)
     log_root_path = os.path.abspath(os.path.join("logs", "waq", agent_cfg.experiment_name))
@@ -365,6 +390,8 @@ def main():
     policy = runner.get_inference_policy()
 
     fixed_command = [args_cli.command_x, args_cli.command_y, args_cli.command_yaw]
+    if not args_cli.no_velocity_arrows:
+        print("[INFO] Velocity arrows enabled: green=command velocity, blue=measured base velocity.", flush=True)
     if not args_cli.random_commands:
         if _set_fixed_command(env, fixed_command):
             print(f"[INFO] Using fixed play command: {_format_command(fixed_command)}")

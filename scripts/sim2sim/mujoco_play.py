@@ -18,9 +18,24 @@ import torch
 
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_PROJECT_ROOT / "source" / "isaaclab_waq"))
+
+from isaaclab_waq.assets.robots.bpx_constants import (
+    BPX_ACTION_SCALE,
+    BPX_ARMATURE,
+    BPX_DAMPING,
+    BPX_DAMPING_RATIO,
+    BPX_DEFAULT_BASE_HEIGHT,
+    BPX_EFFORT_LIMIT,
+    BPX_NATURAL_FREQUENCY,
+    BPX_STAND_JOINT_POS,
+    BPX_STIFFNESS,
+)
+
 DEFAULT_XML = _PROJECT_ROOT / "assets" / "BPX" / "mujoco" / "bpx.xml"
 LEG_PREFIXES = ("fl", "fr", "hl", "hr")
 JOINT_SUFFIXES = ("hip_roll_joint", "hip_pitch_joint", "knee_joint")
+DEFAULT_JOINT_NAMES = [f"{leg}_{suffix}" for leg in LEG_PREFIXES for suffix in JOINT_SUFFIXES]
 
 
 def _load_mujoco():
@@ -121,6 +136,56 @@ def _load_metadata(policy_path: pathlib.Path, metadata_path: pathlib.Path | None
             f"Missing metadata file: {metadata_path}. Run scripts/waq/export_policy.py first."
         )
     return json.loads(metadata_path.read_text(encoding="utf-8"))
+
+
+def _joint_default(name: str) -> float:
+    if name.endswith("_hip_roll_joint"):
+        return float(BPX_STAND_JOINT_POS[".*_hip_roll_joint"])
+    if name.endswith("_hip_pitch_joint"):
+        return float(BPX_STAND_JOINT_POS[".*_hip_pitch_joint"])
+    if name.endswith("_knee_joint"):
+        return float(BPX_STAND_JOINT_POS[".*_knee_joint"])
+    raise KeyError(name)
+
+
+def _joint_action_scale(name: str) -> float:
+    if name.endswith("_hip_roll_joint"):
+        return float(BPX_ACTION_SCALE[".*_hip_roll_joint"])
+    if name.endswith("_hip_pitch_joint"):
+        return float(BPX_ACTION_SCALE[".*_hip_pitch_joint"])
+    if name.endswith("_knee_joint"):
+        return float(BPX_ACTION_SCALE[".*_knee_joint"])
+    raise KeyError(name)
+
+
+def _default_stand_metadata() -> dict:
+    """Build enough metadata to test the MuJoCo XML and PD layer without a policy."""
+
+    num_actor_obs = 45
+    history_length = 15
+    return {
+        "joint_names": DEFAULT_JOINT_NAMES,
+        "default_joint_pos": [_joint_default(name) for name in DEFAULT_JOINT_NAMES],
+        "action_scale": [_joint_action_scale(name) for name in DEFAULT_JOINT_NAMES],
+        "base_height": float(BPX_DEFAULT_BASE_HEIGHT),
+        "history_length": history_length,
+        "num_actor_obs": num_actor_obs,
+        "num_history_obs": num_actor_obs * history_length,
+        "num_actions": len(DEFAULT_JOINT_NAMES),
+        "control": {
+            "profile": "default_stand",
+            "stiffness": float(BPX_STIFFNESS),
+            "damping": float(BPX_DAMPING),
+            "effort_limit": float(BPX_EFFORT_LIMIT),
+            "armature": float(BPX_ARMATURE),
+            "joint_friction": 0.01,
+            "natural_frequency": float(BPX_NATURAL_FREQUENCY),
+            "damping_ratio": float(BPX_DAMPING_RATIO),
+            "sim_dt": 0.005,
+            "decimation": 4,
+            "policy_dt": 0.02,
+        },
+    }
 
 
 def _add_stairs(root: ET.Element, step_height: float, step_width: float, num_steps: int):
@@ -433,8 +498,9 @@ class BpxMujocoSim:
 
 def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
     device = torch.device(args.device)
-    policy.to(device)
-    policy.eval()
+    if policy is not None:
+        policy.to(device)
+        policy.eval()
     control_dt = sim.sim_dt * sim.decimation
     start_wall = time.time()
     last_print = 0.0
@@ -565,7 +631,7 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Play an exported DreamWaQ BPX policy in MuJoCo.")
-    parser.add_argument("--policy", required=True, help="Exported TorchScript policy path.")
+    parser.add_argument("--policy", default=None, help="Exported TorchScript policy path. Not required for --zero_action.")
     parser.add_argument("--metadata", default=None, help="Policy metadata JSON. Defaults to <policy>.json.")
     parser.add_argument("--xml", default=str(DEFAULT_XML), help="BPX MuJoCo XML path.")
     parser.add_argument("--terrain", choices=("flat", "stairs"), default="flat", help="Simple MuJoCo terrain.")
@@ -581,7 +647,7 @@ def main():
     parser.add_argument("--duration", type=float, default=30.0, help="Simulation duration in seconds. Use 0 to run forever.")
     parser.add_argument("--headless", action="store_true", default=False, help="Do not open the MuJoCo viewer.")
     parser.add_argument("--real_time", "--real-time", dest="real_time", action="store_true", default=False)
-    parser.add_argument("--stand_only", "--stand-only", dest="stand_only", action="store_true", default=False)
+    parser.add_argument("--stand_only", "--stand-only", "--zero_action", "--zero-action", dest="stand_only", action="store_true", default=False)
     parser.add_argument("--debug_obs", "--debug-obs", dest="debug_obs", action="store_true", default=False)
     parser.add_argument("--device", default="cpu", help="Torch device for policy inference.")
     parser.add_argument("--sim_dt", "--sim-dt", dest="sim_dt", type=float, default=None)
@@ -650,10 +716,17 @@ def main():
     args = parser.parse_args()
 
     mujoco = _load_mujoco()
-    policy_path = pathlib.Path(args.policy).expanduser().resolve()
-    metadata_path = pathlib.Path(args.metadata).expanduser().resolve() if args.metadata else None
-    metadata = _load_metadata(policy_path, metadata_path)
-    policy = torch.jit.load(str(policy_path), map_location=args.device)
+    if args.stand_only and args.policy is None:
+        policy_path = None
+        metadata = _default_stand_metadata()
+        policy = None
+    else:
+        if args.policy is None:
+            raise SystemExit("--policy is required unless --zero_action/--stand_only is used.")
+        policy_path = pathlib.Path(args.policy).expanduser().resolve()
+        metadata_path = pathlib.Path(args.metadata).expanduser().resolve() if args.metadata else None
+        metadata = _load_metadata(policy_path, metadata_path)
+        policy = torch.jit.load(str(policy_path), map_location=args.device)
     model = _make_model(
         mujoco,
         pathlib.Path(args.xml),
@@ -664,7 +737,10 @@ def main():
     )
     sim = BpxMujocoSim(mujoco, model, metadata, args)
 
-    print(f"[INFO] Loaded policy: {policy_path}")
+    if policy_path is None:
+        print("[INFO] Running zero-action stand test without loading a policy.")
+    else:
+        print(f"[INFO] Loaded policy: {policy_path}")
     print(f"[INFO] Loaded MuJoCo XML: {pathlib.Path(args.xml).expanduser().resolve()}")
     print(
         "[INFO] Sim2sim control: "

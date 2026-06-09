@@ -147,6 +147,15 @@ class DreamWaQRunner:
             command_x_sum = 0.0
             velocity_x_sum = 0.0
             rollout_stat_count = 0
+            diagnostic_stat_count = 0
+            base_height_sum = 0.0
+            base_height_min: float | None = None
+            roll_pitch_sum = 0.0
+            roll_pitch_max: float | None = None
+            forward_distance_sum = 0.0
+            command_distance_sum = 0.0
+            fall_like_rate_sum = 0.0
+            task_success_rate_sum = 0.0
 
             with torch.inference_mode():
                 for _ in range(self.cfg.num_steps_per_env):
@@ -169,6 +178,25 @@ class DreamWaQRunner:
                         command_x_sum += float(command[:, 0].mean().item())
                     velocity_x_sum += float(estimator_target[:, 0].mean().item())
                     rollout_stat_count += 1
+                    diagnostics = self._rollout_diagnostics(command)
+                    if diagnostics:
+                        diagnostic_stat_count += 1
+                        base_height_sum += diagnostics["base_height_mean"]
+                        base_height_min = (
+                            diagnostics["base_height_min"]
+                            if base_height_min is None
+                            else min(base_height_min, diagnostics["base_height_min"])
+                        )
+                        roll_pitch_sum += diagnostics["roll_pitch_mean"]
+                        roll_pitch_max = (
+                            diagnostics["roll_pitch_max"]
+                            if roll_pitch_max is None
+                            else max(roll_pitch_max, diagnostics["roll_pitch_max"])
+                        )
+                        forward_distance_sum += diagnostics["forward_distance_mean"]
+                        command_distance_sum += diagnostics["command_distance_mean"]
+                        fall_like_rate_sum += diagnostics["fall_like_rate"]
+                        task_success_rate_sum += diagnostics["task_success_rate"]
 
                     next_obs_raw, rewards, dones, infos = self.env.step(actions)
                     for name, value in self._reward_step_values().items():
@@ -260,6 +288,14 @@ class DreamWaQRunner:
                     else 0.0,
                     "command_x": command_x_sum / max(rollout_stat_count, 1),
                     "velocity_x": velocity_x_sum / max(rollout_stat_count, 1),
+                    "base_height_mean": base_height_sum / max(diagnostic_stat_count, 1),
+                    "base_height_min": base_height_min if base_height_min is not None else 0.0,
+                    "roll_pitch_mean": roll_pitch_sum / max(diagnostic_stat_count, 1),
+                    "roll_pitch_max": roll_pitch_max if roll_pitch_max is not None else 0.0,
+                    "forward_distance_mean": forward_distance_sum / max(diagnostic_stat_count, 1),
+                    "command_distance_mean": command_distance_sum / max(diagnostic_stat_count, 1),
+                    "fall_like_rate": fall_like_rate_sum / max(diagnostic_stat_count, 1),
+                    "task_success_rate": task_success_rate_sum / max(diagnostic_stat_count, 1),
                 }
                 self._last_reward_metrics = {
                     name: value / max(iter_reward_term_count, 1) for name, value in iter_reward_terms.items()
@@ -419,6 +455,87 @@ class DreamWaQRunner:
             f"Reward/step/{term_name}": float(term_means[index].item()) for index, term_name in enumerate(term_names)
         }
 
+    def _rollout_diagnostics(self, command: torch.Tensor | None) -> dict[str, float]:
+        env = self._unwrap_env()
+        scene = getattr(env, "scene", None)
+        if scene is None:
+            return {}
+        try:
+            asset = scene["robot"]
+        except (KeyError, TypeError):
+            return {}
+
+        root_pos = getattr(asset.data, "root_link_pos_w", None)
+        if not isinstance(root_pos, torch.Tensor):
+            root_pos = getattr(asset.data, "root_pos_w", None)
+        projected_gravity = getattr(asset.data, "projected_gravity_b", None)
+        if not isinstance(root_pos, torch.Tensor) or not isinstance(projected_gravity, torch.Tensor):
+            return {}
+
+        root_pos = root_pos.to(self.device)
+        projected_gravity = projected_gravity.to(self.device)
+        base_z = root_pos[:, 2]
+        relative_height = base_z
+
+        sensors = getattr(scene, "sensors", {})
+        try:
+            height_scanner = sensors["height_scanner"]
+        except (KeyError, TypeError):
+            height_scanner = None
+        ray_hits = getattr(getattr(height_scanner, "data", None), "ray_hits_w", None)
+        if isinstance(ray_hits, torch.Tensor) and ray_hits.numel() > 0:
+            hits_z = ray_hits.to(self.device)[..., 2]
+            fallback_height = base_z.unsqueeze(1) - 0.42
+            hits_z = torch.where(torch.isfinite(hits_z), hits_z, fallback_height)
+            terrain_height = torch.mean(hits_z, dim=1)
+            relative_height = base_z - terrain_height
+
+        roll_pitch = torch.acos(torch.clamp(-projected_gravity[:, 2], -1.0, 1.0))
+        stable = (relative_height > 0.30) & (roll_pitch < 0.65)
+        fall_like = ~stable
+
+        env_origins = getattr(scene, "env_origins", None)
+        if isinstance(env_origins, torch.Tensor):
+            forward_distance = torch.norm(root_pos[:, :2] - env_origins.to(self.device)[:, :2], dim=1)
+        else:
+            forward_distance = torch.zeros_like(relative_height)
+
+        command_distance = torch.zeros_like(forward_distance)
+        if isinstance(command, torch.Tensor):
+            command = command.to(self.device)
+            episode_length_buf = getattr(env, "episode_length_buf", None)
+            if isinstance(episode_length_buf, torch.Tensor):
+                episode_steps = episode_length_buf.to(self.device).float().clamp_min(1.0)
+            else:
+                episode_steps = torch.ones_like(forward_distance)
+            step_dt = getattr(env, "step_dt", None)
+            if not isinstance(step_dt, (int, float)):
+                max_episode_length_s = float(getattr(env, "max_episode_length_s", 20.0))
+                max_episode_length = max(float(getattr(env, "max_episode_length", 1.0)), 1.0)
+                step_dt = max_episode_length_s / max_episode_length
+            command_speed = torch.norm(command[:, :2], dim=1)
+            command_distance = command_speed * episode_steps * float(step_dt)
+            active_command = command_speed > 0.10
+            distance_target = torch.clamp(command_distance * 0.55, min=0.25)
+            task_success = stable & (forward_distance >= distance_target)
+            if active_command.any():
+                task_success_rate = task_success[active_command].float().mean()
+            else:
+                task_success_rate = stable.float().mean()
+        else:
+            task_success_rate = stable.float().mean()
+
+        return {
+            "base_height_mean": float(relative_height.mean().item()),
+            "base_height_min": float(relative_height.min().item()),
+            "roll_pitch_mean": float(roll_pitch.mean().item()),
+            "roll_pitch_max": float(roll_pitch.max().item()),
+            "forward_distance_mean": float(forward_distance.mean().item()),
+            "command_distance_mean": float(command_distance.mean().item()),
+            "fall_like_rate": float(fall_like.float().mean().item()),
+            "task_success_rate": float(task_success_rate.item()),
+        }
+
     def _episode_lengths_for_done(self) -> torch.Tensor:
         env = self._unwrap_env()
         episode_length_buf = getattr(env, "episode_length_buf", None)
@@ -574,6 +691,14 @@ class DreamWaQRunner:
         action_clipped_abs = float(rollout_stats.get("action_clipped_abs", 0.0) or 0.0)
         command_x = float(rollout_stats.get("command_x", 0.0) or 0.0)
         velocity_x = float(rollout_stats.get("velocity_x", 0.0) or 0.0)
+        fall_like_rate = float(rollout_stats.get("fall_like_rate", 0.0) or 0.0)
+        base_height_mean = float(rollout_stats.get("base_height_mean", 0.0) or 0.0)
+        base_height_min = float(rollout_stats.get("base_height_min", 0.0) or 0.0)
+        roll_pitch_mean = float(rollout_stats.get("roll_pitch_mean", 0.0) or 0.0)
+        roll_pitch_max = float(rollout_stats.get("roll_pitch_max", 0.0) or 0.0)
+        forward_distance_mean = float(rollout_stats.get("forward_distance_mean", 0.0) or 0.0)
+        command_distance_mean = float(rollout_stats.get("command_distance_mean", 0.0) or 0.0)
+        task_success_rate = float(rollout_stats.get("task_success_rate", 0.0) or 0.0)
         mean_reward = self._pick_metric(
             episode_metrics,
             ("Train/mean_reward", "Episode/reward", "Episode_Reward/total"),
@@ -637,6 +762,14 @@ class DreamWaQRunner:
             self.writer.add_scalar("Rollout/action_clipped_abs", action_clipped_abs, iteration)
             self.writer.add_scalar("Rollout/command_x", command_x, iteration)
             self.writer.add_scalar("Rollout/velocity_x", velocity_x, iteration)
+            self.writer.add_scalar("Diagnostics/fall_like_rate", fall_like_rate, iteration)
+            self.writer.add_scalar("Diagnostics/base_height_mean", base_height_mean, iteration)
+            self.writer.add_scalar("Diagnostics/base_height_min", base_height_min, iteration)
+            self.writer.add_scalar("Diagnostics/roll_pitch_mean", roll_pitch_mean, iteration)
+            self.writer.add_scalar("Diagnostics/roll_pitch_max", roll_pitch_max, iteration)
+            self.writer.add_scalar("Diagnostics/forward_distance_mean", forward_distance_mean, iteration)
+            self.writer.add_scalar("Diagnostics/command_distance_mean", command_distance_mean, iteration)
+            self.writer.add_scalar("Diagnostics/task_success_rate", task_success_rate, iteration)
             if len(rewbuffer) > 0:
                 self.writer.add_scalar("Train/mean_reward", mean_reward, iteration)
                 self.writer.add_scalar("Train/mean_episode_length", mean_length, iteration)
@@ -693,6 +826,14 @@ class DreamWaQRunner:
                 self._line("Rollout/action clip frac", f"{action_clip_fraction:.4f}"),
                 self._line("Rollout/action |clipped|", f"{action_clipped_abs:.4f}"),
                 self._line("Rollout/cmd_x vs vel_x", f"{command_x:.3f} / {velocity_x:.3f}"),
+                self._line("Diagnostics/fall_like_rate", f"{fall_like_rate:.4f}"),
+                self._line("Diagnostics/task_success_rate", f"{task_success_rate:.4f}"),
+                self._line("Diagnostics/base_height mean/min", f"{base_height_mean:.3f} / {base_height_min:.3f}"),
+                self._line("Diagnostics/roll_pitch mean/max", f"{roll_pitch_mean:.3f} / {roll_pitch_max:.3f}"),
+                self._line(
+                    "Diagnostics/dist/cmd_dist",
+                    f"{forward_distance_mean:.2f} / {command_distance_mean:.2f}",
+                ),
             ]
         )
         if reward_metrics:

@@ -151,28 +151,28 @@ class CommandsCfg:
     base_velocity = mdp.ForwardBiasedVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(6.0, 10.0),
-        rel_standing_envs=0.05,
-        rel_forward_envs=0.80,
+        rel_standing_envs=0.02,
+        rel_forward_envs=0.75,
         rel_heading_envs=0.3,
         heading_command=True,
         heading_control_stiffness=0.5,
         debug_vis=False,
         ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.10, 0.65),
+            lin_vel_x=(-0.20, 0.75),
             lin_vel_y=(-0.10, 0.10),
             ang_vel_z=(-0.25, 0.25),
             heading=(-math.pi, math.pi),
         ),
         forward_ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.65),
+            lin_vel_x=(0.0, 0.75),
             lin_vel_y=(-0.10, 0.10),
             ang_vel_z=(-0.25, 0.25),
             heading=(-math.pi, math.pi),
         ),
         limit_ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.80, 3.00),
+            lin_vel_x=(-0.60, 1.80),
             lin_vel_y=(-0.35, 0.35),
-            ang_vel_z=(-0.75, 0.75),
+            ang_vel_z=(-0.70, 0.70),
             heading=(-math.pi, math.pi),
         ),
     )
@@ -340,41 +340,6 @@ class EventCfg:
         },
     )
 
-    actuator_gains = EventTerm(
-        func=mdp.randomize_actuator_gains,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
-            "stiffness_distribution_params": (0.85, 1.20),
-            "damping_distribution_params": (0.85, 1.30),
-            "operation": "scale",
-            "distribution": "uniform",
-        },
-    )
-
-    joint_parameters = EventTerm(
-        func=mdp.randomize_joint_parameters,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
-            "friction_distribution_params": (0.75, 1.50),
-            "armature_distribution_params": (0.85, 1.25),
-            "operation": "scale",
-            "distribution": "uniform",
-        },
-    )
-
-    actuator_effort_limit = EventTerm(
-        func=mdp.randomize_actuator_effort_limits,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
-            "effort_limit_distribution_params": (0.90, 1.10),
-            "operation": "scale",
-            "distribution": "uniform",
-        },
-    )
-
     base_external_force_torque = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
@@ -413,11 +378,11 @@ class EventCfg:
 @configclass
 class RewardsCfg:
     alive = RewTerm(func=mdp.is_alive, weight=0.05)
-    upright = RewTerm(func=mdp.upright_exp, weight=0.60, params={"std": 0.45})
+    upright = RewTerm(func=mdp.upright_exp, weight=0.35, params={"std": 0.45})
 
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=4.0,
+        weight=3.5,
         params={"command_name": "base_velocity", "std": 0.35},
     )
     track_ang_vel_z = RewTerm(
@@ -427,29 +392,12 @@ class RewardsCfg:
     )
     track_forward_velocity_fine = RewTerm(
         func=mdp.track_forward_velocity_exp,
-        weight=1.8,
+        weight=1.4,
         params={"command_name": "base_velocity", "std": 0.25},
     )
-    forward_velocity_error = RewTerm(
-        func=mdp.forward_velocity_error_l1,
-        weight=-0.8,
-        params={"command_name": "base_velocity"},
-    )
-    no_forward_motion = RewTerm(
-        func=mdp.no_forward_motion,
-        weight=-2.0,
-        params={"command_name": "base_velocity", "min_command": 0.20, "min_velocity_ratio": 0.35},
-    )
-    crawl_penalty = RewTerm(
-        func=mdp.crawl_penalty,
-        weight=-0.8,
-        params={
-            "command_name": "base_velocity",
-            "min_command": 0.25,
-            "min_velocity_ratio": 0.45,
-            "action_threshold": 0.75,
-        },
-    )
+    forward_velocity_error = None
+    no_forward_motion = None
+    crawl_penalty = None
     track_lateral_velocity_fine = RewTerm(
         func=mdp.track_lateral_velocity_exp,
         weight=1.2,
@@ -470,35 +418,24 @@ class RewardsCfg:
         weight=-1.2,
         params={"command_name": "base_velocity"},
     )
-    lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-3.0)
-    ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.08)
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.90)
+    lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
+    ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.5)
     base_height = RewTerm(
         func=mdp.base_height_above_terrain_l2,
-        weight=-6.0,
-        params={"target_height": 0.43, "sensor_cfg": SceneEntityCfg("height_scanner")},
-    )
-    base_height_low = RewTerm(
-        func=mdp.base_height_below_target_l2,
-        weight=-18.0,
-        params={"target_height": 0.43, "sensor_cfg": SceneEntityCfg("height_scanner")},
+        weight=-3.0,
+        params={"target_height": 0.42, "sensor_cfg": SceneEntityCfg("height_scanner")},
     )
     joint_vel = RewTerm(func=mdp.joint_vel_l2, weight=-4.0e-4)
-    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-8)
+    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-5.0e-8)
     joint_torques = RewTerm(func=mdp.joint_torques_l2, weight=-2.0e-5)
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.12)
-    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.008)
-    torque_saturation = RewTerm(
-        func=mdp.applied_torque_limits,
-        weight=-0.006,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES)},
-    )
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
     energy = RewTerm(func=mdp.energy, weight=-5.0e-6)
 
     joint_pos = RewTerm(
         func=mdp.joint_position_penalty,
-        weight=-0.10,
+        weight=-0.08,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
             "stand_still_scale": 1.0,
@@ -507,7 +444,7 @@ class RewardsCfg:
     )
     hind_hip_roll_pose = RewTerm(
         func=mdp.joint_position_penalty,
-        weight=-0.85,
+        weight=-0.35,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=HIND_HIP_ROLL_JOINT_NAMES),
             "stand_still_scale": 1.0,
@@ -516,7 +453,7 @@ class RewardsCfg:
     )
     hind_leg_pose = RewTerm(
         func=mdp.joint_position_penalty,
-        weight=-0.10,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=HIND_LEG_JOINT_NAMES),
             "stand_still_scale": 1.0,
@@ -565,9 +502,9 @@ class RewardsCfg:
     )
     hind_feet_swing_height = RewTerm(
         func=mdp.feet_swing_height_terrain_l2,
-        weight=-0.32,
+        weight=-0.24,
         params={
-            "target_height": 0.15,
+            "target_height": 0.14,
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=HIND_FEET_BODY_NAMES),
             "sensor_cfg": SceneEntityCfg("height_scanner"),
@@ -593,7 +530,7 @@ class RewardsCfg:
     )
     hind_calf_contacts = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-1.80,
+        weight=-0.75,
         params={
             "threshold": 1.0,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=HIND_CALF_BODY_NAMES),
@@ -619,15 +556,15 @@ class CurriculumCfg:
         func=mdp.terrain_levels_vel,
         params={
             "command_name": "base_velocity",
-            "promotion_distance_ratio": 0.55,
-            "promotion_command_ratio": 0.55,
+            "promotion_distance_ratio": 0.75,
+            "promotion_command_ratio": None,
             "demotion_command_ratio": 0.5,
-            "minimum_promotion_distance": 2.0,
-            "warmup_steps": 300 * 16,
-            "level_step_interval": 800 * 16,
+            "minimum_promotion_distance": 0.0,
+            "warmup_steps": 0,
+            "level_step_interval": 0,
             "consecutive_successes": 1,
-            "demote_only_early_termination": True,
-            "min_level_hold_steps": 250 * 16,
+            "demote_only_early_termination": False,
+            "min_level_hold_steps": 0,
         },
     )
     command_vel = CurrTerm(
@@ -637,51 +574,45 @@ class CurriculumCfg:
             "velocity_stages": [
                 {
                     "step": 0,
-                    "lin_vel_x": (-0.10, 0.65),
+                    "lin_vel_x": (-0.20, 0.75),
                     "lin_vel_y": (-0.10, 0.10),
                     "ang_vel_z": (-0.25, 0.25),
                 },
                 {
-                    "step": 3000 * 16,
-                    "lin_vel_x": (-0.15, 0.90),
-                    "lin_vel_y": (-0.14, 0.14),
-                    "ang_vel_z": (-0.32, 0.32),
-                },
-                {
-                    "step": 7000 * 16,
-                    "lin_vel_x": (-0.25, 1.20),
+                    "step": 6000 * 16,
+                    "lin_vel_x": (-0.30, 0.95),
                     "lin_vel_y": (-0.18, 0.18),
                     "ang_vel_z": (-0.40, 0.40),
                 },
                 {
                     "step": 12000 * 16,
-                    "lin_vel_x": (-0.35, 1.45),
+                    "lin_vel_x": (-0.35, 1.10),
                     "lin_vel_y": (-0.22, 0.22),
                     "ang_vel_z": (-0.48, 0.48),
                 },
                 {
-                    "step": 20000 * 16,
-                    "lin_vel_x": (-0.50, 1.80),
+                    "step": 18000 * 16,
+                    "lin_vel_x": (-0.45, 1.25),
                     "lin_vel_y": (-0.30, 0.30),
-                    "ang_vel_z": (-0.58, 0.58),
+                    "ang_vel_z": (-0.60, 0.60),
                 },
                 {
-                    "step": 32000 * 16,
-                    "lin_vel_x": (-0.65, 2.30),
+                    "step": 26000 * 16,
+                    "lin_vel_x": (-0.50, 1.40),
+                    "lin_vel_y": (-0.30, 0.30),
+                    "ang_vel_z": (-0.60, 0.60),
+                },
+                {
+                    "step": 36000 * 16,
+                    "lin_vel_x": (-0.55, 1.60),
                     "lin_vel_y": (-0.32, 0.32),
                     "ang_vel_z": (-0.65, 0.65),
                 },
                 {
                     "step": 45000 * 16,
-                    "lin_vel_x": (-0.80, 2.65),
+                    "lin_vel_x": (-0.60, 1.80),
                     "lin_vel_y": (-0.35, 0.35),
                     "ang_vel_z": (-0.70, 0.70),
-                },
-                {
-                    "step": 60000 * 16,
-                    "lin_vel_x": (-0.80, 3.00),
-                    "lin_vel_y": (-0.35, 0.35),
-                    "ang_vel_z": (-0.75, 0.75),
                 },
             ],
         },
@@ -734,8 +665,3 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.observations.cenet.enable_corruption = False
         self.events.base_external_force_torque = None
         self.events.push_robot = None
-        self.events.physics_material = None
-        self.events.add_base_mass = None
-        self.events.actuator_gains = None
-        self.events.joint_parameters = None
-        self.events.actuator_effort_limit = None

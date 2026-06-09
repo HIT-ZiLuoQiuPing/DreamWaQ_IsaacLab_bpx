@@ -50,7 +50,7 @@ This writes `policy_jit.pt` and `policy_jit.json` next to the checkpoint. Run it
 ./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive
 ```
 
-Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. The MuJoCo runner applies a conservative raw-action safety clip by default (`--clip-actions 2.0`), keeps IsaacLab-style term-major observation history for CENet, and adds the trained actuator armature/friction to reduce sim2sim explosions. If the model is still unstable, first test a milder execution layer:
+Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. The MuJoCo runner applies a raw-action safety clip by default (`--clip-actions 4.0`) and keeps IsaacLab-style term-major observation history for CENet. If the model is still unstable, first test a milder execution layer:
 
 ```bash
 ./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive --command-x 0.3 --clip-actions 1.5 --action-scale-multiplier 0.7
@@ -59,7 +59,7 @@ Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` 
 If the robot stays stable but immediately falls over or crouches, first verify the MuJoCo model and PD layer without the policy:
 
 ```bash
-./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --stand-only --duration 10 --real-time --debug-obs
+./isaaclab_waq.sh --mujoco-play --zero-action --duration 10 --real-time --debug-obs
 ```
 
 Then inspect policy observations and actions:
@@ -73,7 +73,7 @@ If the observation looks reasonable but the motion folds the legs in the wrong d
 The MuJoCo player defaults to `--actuator-mode position`, which matches mjlab's `BuiltinPositionActuatorCfg`: the policy outputs position targets and MuJoCo applies the built-in actuator force limit. The old external torque-PD path is still available for comparison:
 
 ```bash
-./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --actuator-mode torque_pd --stand-only --duration 10 --real-time --debug-obs
+./isaaclab_waq.sh --mujoco-play --zero-action --actuator-mode torque_pd --duration 10 --real-time --debug-obs
 ```
 
 If you suspect the exported action/joint order is wrong, compare `--joint-order metadata`, `--joint-order type_major`, and `--joint-order alphabetical`.

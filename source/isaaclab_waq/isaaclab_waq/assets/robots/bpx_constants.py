@@ -25,3 +25,12 @@ BPX_STAND_JOINT_POS = {
     ".*_hip_pitch_joint": 0.60,
     ".*_knee_joint": -1.20,
 }
+
+# MuJoCo deployment uses the same action signs as IsaacLab. The important
+# deployment mapping is the type-major joint order: roll joints, pitch joints,
+# then knee joints.
+BPX_MUJOCO_ACTION_SIGN = {
+    ".*_hip_roll_joint": 1.0,
+    ".*_hip_pitch_joint": 1.0,
+    ".*_knee_joint": 1.0,
+}

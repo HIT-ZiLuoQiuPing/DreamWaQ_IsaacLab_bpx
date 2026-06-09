@@ -50,11 +50,7 @@ This writes `policy_jit.pt` and `policy_jit.json` next to the checkpoint. Run it
 ./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive
 ```
 
-Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. The MuJoCo runner applies a raw-action safety clip by default (`--clip-actions 4.0`) and keeps IsaacLab-style term-major observation history for CENet. If the model is still unstable, first test a milder execution layer:
-
-```bash
-./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --real-time --interactive --command-x 0.3 --clip-actions 1.5 --action-scale-multiplier 0.7
-```
+Use `W/S` for forward speed, `A/D` for lateral velocity, `Q/E` for yaw, `Space` to stop, and `R` to reset the command. The MuJoCo runner uses the BPX IsaacLab action order by default: all hip-roll joints, all hip-pitch joints, then all knee joints (`--joint-order type_major`). Re-export old checkpoints after pulling this change so `policy_jit.json` records the same type-major metadata.
 
 If the robot stays stable but immediately falls over or crouches, first verify the MuJoCo model and PD layer without the policy:
 
@@ -65,10 +61,10 @@ If the robot stays stable but immediately falls over or crouches, first verify t
 Then inspect policy observations and actions:
 
 ```bash
-./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --command-x 0.3 --clip-actions 1.5 --action-scale-multiplier 0.7 --debug-obs --real-time
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --command-x 0.3 --debug-obs --real-time
 ```
 
-If the observation looks reasonable but the motion folds the legs in the wrong direction, test joint sign hypotheses one at a time, for example `--flip-hip-pitch`, `--flip-knee`, or both.
+The MuJoCo runner has safety resets for deployment debugging. If the policy flips over, the log prints the reset reason instead of continuing to report meaningless velocities from an upside-down state.
 
 The MuJoCo player defaults to `--actuator-mode position`, which matches mjlab's `BuiltinPositionActuatorCfg`: the policy outputs position targets and MuJoCo applies the built-in actuator force limit. The old external torque-PD path is still available for comparison:
 
@@ -76,7 +72,13 @@ The MuJoCo player defaults to `--actuator-mode position`, which matches mjlab's 
 ./isaaclab_waq.sh --mujoco-play --zero-action --actuator-mode torque_pd --duration 10 --real-time --debug-obs
 ```
 
-If you suspect the exported action/joint order is wrong, compare `--joint-order metadata`, `--joint-order type_major`, and `--joint-order alphabetical`.
+For ablation only, compare `--joint-order metadata`, `--joint-order leg_major`, `--joint-order type_major`, and `--joint-order alphabetical`, or test one sign hypothesis at a time with `--flip-hip-pitch` / `--flip-knee`. These flags are diagnostic switches, not the default deployment path.
+
+The BPX MuJoCo XML from the mjlab tree can also be used directly; missing floor/actuators are injected by the runner:
+
+```bash
+./isaaclab_waq.sh --mujoco-play --policy logs/waq/bpx_waq_rough/<run>/policy_jit.pt --xml /home/ubuntu/robot_rl/bpx_mjlab/src/bpx_mjlab/bpx/xmls/bpx.xml --real-time --interactive
+```
 
 The CENet history layout defaults to `--history-layout term_major`, matching IsaacLab's observation manager: each observation term is flattened over history first, then the terms are concatenated. `--history-layout frame_major` is kept only as an ablation switch.
 

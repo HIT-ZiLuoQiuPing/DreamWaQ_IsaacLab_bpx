@@ -27,6 +27,7 @@ from isaaclab_waq.assets.robots.bpx_constants import (
     BPX_DAMPING_RATIO,
     BPX_DEFAULT_BASE_HEIGHT,
     BPX_EFFORT_LIMIT,
+    BPX_MUJOCO_ACTION_SIGN,
     BPX_NATURAL_FREQUENCY,
     BPX_STAND_JOINT_POS,
     BPX_STIFFNESS,
@@ -35,7 +36,7 @@ from isaaclab_waq.assets.robots.bpx_constants import (
 DEFAULT_XML = _PROJECT_ROOT / "assets" / "BPX" / "mujoco" / "bpx.xml"
 LEG_PREFIXES = ("fl", "fr", "hl", "hr")
 JOINT_SUFFIXES = ("hip_roll_joint", "hip_pitch_joint", "knee_joint")
-DEFAULT_JOINT_NAMES = [f"{leg}_{suffix}" for leg in LEG_PREFIXES for suffix in JOINT_SUFFIXES]
+DEFAULT_JOINT_NAMES = [f"{leg}_{suffix}" for suffix in JOINT_SUFFIXES for leg in LEG_PREFIXES]
 
 
 def _load_mujoco():
@@ -158,6 +159,16 @@ def _joint_action_scale(name: str) -> float:
     raise KeyError(name)
 
 
+def _joint_action_sign(name: str) -> float:
+    if name.endswith("_hip_roll_joint"):
+        return float(BPX_MUJOCO_ACTION_SIGN[".*_hip_roll_joint"])
+    if name.endswith("_hip_pitch_joint"):
+        return float(BPX_MUJOCO_ACTION_SIGN[".*_hip_pitch_joint"])
+    if name.endswith("_knee_joint"):
+        return float(BPX_MUJOCO_ACTION_SIGN[".*_knee_joint"])
+    raise KeyError(name)
+
+
 def _default_stand_metadata() -> dict:
     """Build enough metadata to test the MuJoCo XML and PD layer without a policy."""
 
@@ -167,6 +178,7 @@ def _default_stand_metadata() -> dict:
         "joint_names": DEFAULT_JOINT_NAMES,
         "default_joint_pos": [_joint_default(name) for name in DEFAULT_JOINT_NAMES],
         "action_scale": [_joint_action_scale(name) for name in DEFAULT_JOINT_NAMES],
+        "action_sign": [_joint_action_sign(name) for name in DEFAULT_JOINT_NAMES],
         "base_height": float(BPX_DEFAULT_BASE_HEIGHT),
         "history_length": history_length,
         "num_actor_obs": num_actor_obs,
@@ -188,7 +200,7 @@ def _default_stand_metadata() -> dict:
     }
 
 
-def _add_stairs(root: ET.Element, step_height: float, step_width: float, num_steps: int):
+def _add_stairs(root: ET.Element, step_height: float, step_width: float, num_steps: int, friction: float):
     worldbody = root.find("worldbody")
     if worldbody is None:
         raise RuntimeError("MuJoCo XML has no <worldbody>.")
@@ -204,22 +216,100 @@ def _add_stairs(root: ET.Element, step_height: float, step_width: float, num_ste
                 "pos": f"{x_pos:.4f} 0 {height * 0.5:.4f}",
                 "size": f"{step_width * 0.5:.4f} 1.0 {height * 0.5:.4f}",
                 "material": "grid_mat",
-                "friction": "0.8 0.01 0.001",
+                "friction": f"{friction:.4f} 0.005 0.0001",
+                "condim": "3",
+                "priority": "1",
             },
         )
 
 
-def _make_model(mujoco, xml_path: pathlib.Path, terrain: str, step_height: float, step_width: float, num_steps: int):
+def _ensure_actuators(root: ET.Element):
+    actuator = root.find("actuator")
+    if actuator is None:
+        actuator = ET.SubElement(root, "actuator")
+    existing = {element.get("name") for element in actuator if element.get("name")}
+    for joint_name in DEFAULT_JOINT_NAMES:
+        motor_name = f"{joint_name}_motor"
+        if motor_name in existing:
+            continue
+        ET.SubElement(
+            actuator,
+            "motor",
+            {
+                "name": motor_name,
+                "joint": joint_name,
+                "gear": "1",
+                "ctrllimited": "true",
+                "ctrlrange": f"{-BPX_EFFORT_LIMIT:.4f} {BPX_EFFORT_LIMIT:.4f}",
+            },
+        )
+
+
+def _ensure_floor(root: ET.Element, friction: float):
+    worldbody = root.find("worldbody")
+    if worldbody is None:
+        raise RuntimeError("MuJoCo XML has no <worldbody>.")
+    if worldbody.find("./geom[@name='floor']") is not None:
+        return
+    ET.SubElement(
+        worldbody,
+        "geom",
+        {
+            "name": "floor",
+            "type": "plane",
+            "size": "20 20 0.1",
+            "material": "grid_mat",
+            "friction": f"{friction:.4f} 0.005 0.0001",
+            "condim": "3",
+            "priority": "1",
+        },
+    )
+
+
+def _resolve_meshdir(xml_path: pathlib.Path, compiler: ET.Element) -> None:
+    meshdir = compiler.get("meshdir")
+    if meshdir is None:
+        return
+    mesh_path = pathlib.Path(meshdir)
+    if not mesh_path.is_absolute():
+        compiler.set("meshdir", str((xml_path.parent / mesh_path).resolve()))
+
+
+def _apply_collision_defaults(root: ET.Element, friction: float):
+    for geom in root.iter("geom"):
+        name = geom.get("name", "")
+        geom_type = geom.get("type")
+        is_collision = "_collision_" in name or geom_type == "plane" or name.startswith("sim2sim_step_")
+        if not is_collision:
+            continue
+        geom.set("friction", f"{friction:.4f} 0.005 0.0001")
+        geom.set("condim", "3")
+        geom.set("priority", "1")
+
+
+def _make_model(
+    mujoco,
+    xml_path: pathlib.Path,
+    terrain: str,
+    step_height: float,
+    step_width: float,
+    num_steps: int,
+    friction: float,
+):
     xml_path = xml_path.expanduser().resolve()
     tree = ET.parse(xml_path)
     root = tree.getroot()
     compiler = root.find("compiler")
     if compiler is None:
         compiler = ET.SubElement(root, "compiler")
-    compiler.set("meshdir", str(xml_path.parent / "meshes"))
+    _resolve_meshdir(xml_path, compiler)
+
+    _ensure_floor(root, friction)
+    _ensure_actuators(root)
+    _apply_collision_defaults(root, friction)
 
     if terrain == "stairs":
-        _add_stairs(root, step_height, step_width, num_steps)
+        _add_stairs(root, step_height, step_width, num_steps, friction)
     elif terrain != "flat":
         raise ValueError(f"Unsupported MuJoCo terrain: {terrain}")
 
@@ -255,6 +345,13 @@ def _projected_gravity(quat_wxyz: np.ndarray) -> np.ndarray:
     return rot_w_b.T @ np.array([0.0, 0.0, -1.0], dtype=np.float64)
 
 
+def _roll_pitch_from_projected_gravity(projected_gravity: np.ndarray) -> tuple[float, float]:
+    gx, gy, gz = projected_gravity
+    roll = np.arctan2(gy, -gz)
+    pitch = np.arctan2(-gx, np.sqrt(gy * gy + gz * gz))
+    return float(roll), float(pitch)
+
+
 def _sensor_slice(mujoco, model, data, name: str) -> np.ndarray:
     sensor_id = _name_id(mujoco, model, mujoco.mjtObj.mjOBJ_SENSOR, name)
     start = model.sensor_adr[sensor_id]
@@ -267,6 +364,8 @@ def _joint_order(metadata_joint_names: list[str], order: str) -> list[str]:
         return list(metadata_joint_names)
     if order == "type_major":
         return [f"{leg}_{suffix}" for suffix in JOINT_SUFFIXES for leg in LEG_PREFIXES]
+    if order == "leg_major":
+        return [f"{leg}_{suffix}" for leg in LEG_PREFIXES for suffix in JOINT_SUFFIXES]
     if order == "alphabetical":
         return sorted(metadata_joint_names)
     raise ValueError(f"Unsupported joint order: {order}")
@@ -284,12 +383,17 @@ class BpxMujocoSim:
         self.joint_names = _joint_order(metadata_joint_names, args.joint_order)
         default_by_name = dict(zip(metadata_joint_names, metadata["default_joint_pos"]))
         scale_by_name = dict(zip(metadata_joint_names, metadata["action_scale"]))
+        metadata_action_sign = metadata.get("action_sign")
+        if metadata_action_sign is None:
+            sign_by_name = {name: _joint_action_sign(name) for name in metadata_joint_names}
+        else:
+            sign_by_name = dict(zip(metadata_joint_names, metadata_action_sign))
         self.default_joint_pos = np.asarray([default_by_name[name] for name in self.joint_names], dtype=np.float64)
         self.action_scale = (
             np.asarray([scale_by_name[name] for name in self.joint_names], dtype=np.float64)
             * args.action_scale_multiplier
         )
-        self.action_sign = np.ones_like(self.action_scale)
+        self.action_sign = np.asarray([sign_by_name[name] for name in self.joint_names], dtype=np.float64)
         for index, name in enumerate(self.joint_names):
             if args.flip_hip_roll and name.endswith("_hip_roll_joint"):
                 self.action_sign[index] *= -1.0
@@ -358,6 +462,24 @@ class BpxMujocoSim:
         self.last_action[:] = 0.0
         self.history_terms.clear()
         self.mujoco.mj_forward(self.model, self.data)
+
+    def safety_reason(self) -> str | None:
+        if not np.all(np.isfinite(self.data.qpos)) or not np.all(np.isfinite(self.data.qvel)):
+            return "non_finite_state"
+        if self.data.qpos[2] < self.args.min_base_height:
+            return f"base_height_low:{self.data.qpos[2]:.3f}"
+        if self.data.qpos[2] > self.args.max_base_height:
+            return f"base_height_high:{self.data.qpos[2]:.3f}"
+        if np.max(np.abs(self.data.qvel)) > self.args.max_qvel:
+            return f"qvel_high:{np.max(np.abs(self.data.qvel)):.3f}"
+        projected_gravity = _projected_gravity(self.base_quat())
+        if projected_gravity[2] > self.args.min_upright_gravity_z:
+            roll, pitch = _roll_pitch_from_projected_gravity(projected_gravity)
+            return (
+                "orientation_bad:"
+                f"gravity_z={projected_gravity[2]:.3f},roll={roll:.3f},pitch={pitch:.3f}"
+            )
+        return None
 
     def joint_pos(self) -> np.ndarray:
         return np.array(self.data.qpos[self.joint_qpos_addr], dtype=np.float64)
@@ -456,11 +578,7 @@ class BpxMujocoSim:
                 torque = np.clip(torque, -self.effort_limit, self.effort_limit)
                 self.data.ctrl[self.actuator_ids] = torque
             self.mujoco.mj_step(self.model, self.data)
-            if not np.all(np.isfinite(self.data.qpos)) or not np.all(np.isfinite(self.data.qvel)):
-                return False
-            if self.data.qpos[2] < self.args.min_base_height or self.data.qpos[2] > self.args.max_base_height:
-                return False
-            if np.max(np.abs(self.data.qvel)) > self.args.max_qvel:
+            if self.safety_reason() is not None:
                 return False
         return True
 
@@ -485,8 +603,11 @@ class BpxMujocoSim:
         ]
         if action is not None:
             target = self.action_target(action)
+            projected_gravity = obs[3:6]
+            roll, pitch = _roll_pitch_from_projected_gravity(projected_gravity)
             lines.extend(
                 [
+                    f"roll_pitch=[{roll:.4f}, {pitch:.4f}]",
                     f"raw_or_clipped_action={action.tolist()}",
                     f"action_sign={self.action_sign.tolist()}",
                     f"target_joint_pos={target.tolist()}",
@@ -504,6 +625,7 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
     control_dt = sim.sim_dt * sim.decimation
     start_wall = time.time()
     last_print = 0.0
+    elapsed_control_time = 0.0
     step = 0
     reset_count = 0
 
@@ -513,10 +635,12 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
         zero_action = np.zeros(sim.num_actions, dtype=np.float64)
         for _ in range(warmup_steps):
             ok = sim.apply_action(zero_action)
+            elapsed_control_time += control_dt
             if viewer is not None:
                 viewer.sync()
             if not ok:
-                print("[WARN] MuJoCo became unstable during stand warmup; resetting.", flush=True)
+                reason = sim.safety_reason() or "unknown"
+                print(f"[WARN] MuJoCo became unstable during stand warmup ({reason}); resetting.", flush=True)
                 sim.reset()
                 break
         if args.debug_obs:
@@ -529,35 +653,46 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
         while True:
             if viewer is not None and not viewer.is_running():
                 break
-            if args.duration > 0.0 and sim.data.time >= args.duration:
+            if args.duration > 0.0 and elapsed_control_time >= args.duration:
                 break
             step_start = time.time()
             ok = sim.apply_action(zero_action)
+            elapsed_control_time += control_dt
             if viewer is not None:
                 viewer.sync()
             if not ok:
                 reset_count += 1
-                print(f"[WARN] MuJoCo unstable during stand-only; resetting (reset_count={reset_count}).", flush=True)
+                reason = sim.safety_reason() or "unknown"
+                print(
+                    "[WARN] MuJoCo unstable during stand-only; resetting "
+                    f"(reset_count={reset_count}, reason={reason}).",
+                    flush=True,
+                )
                 if args.disable_safety_reset:
                     break
+                if args.max_resets > 0 and reset_count >= args.max_resets:
+                    print(f"[WARN] Max reset count reached ({args.max_resets}); stopping.", flush=True)
+                    break
                 sim.reset()
-            if sim.data.time - last_print >= args.print_interval:
+            if elapsed_control_time - last_print >= args.print_interval:
                 obs = sim.build_observation()
                 print(
                     "[INFO] "
-                    f"t={sim.data.time:6.2f}s stand-only height={sim.data.qpos[2]: .3f} "
+                    f"t={elapsed_control_time:6.2f}s sim_t={sim.data.time:6.2f}s "
+                    f"stand-only height={sim.data.qpos[2]: .3f} "
                     f"joint_vel_abs={np.mean(np.abs(sim.joint_vel())): .4f}",
                     flush=True,
                 )
                 if args.debug_obs:
                     print(sim.debug_summary(obs, zero_action), flush=True)
-                last_print = sim.data.time
+                last_print = elapsed_control_time
             if args.real_time:
                 sleep_time = control_dt - (time.time() - step_start)
                 if sleep_time > 0.0:
                     time.sleep(sleep_time)
         print(
-            f"[INFO] MuJoCo stand-only finished at t={sim.data.time:.2f}s, "
+            f"[INFO] MuJoCo stand-only finished at t={elapsed_control_time:.2f}s "
+            f"(sim_t={sim.data.time:.2f}s), "
             f"wall={time.time() - start_wall:.2f}s, resets={reset_count}."
         )
         return
@@ -566,7 +701,7 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
         while True:
             if viewer is not None and not viewer.is_running():
                 break
-            if args.duration > 0.0 and sim.data.time >= args.duration:
+            if args.duration > 0.0 and elapsed_control_time >= args.duration:
                 break
 
             step_start = time.time()
@@ -584,27 +719,32 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
                 action = np.clip(action, -args.clip_actions, args.clip_actions)
             sim.last_action = action
             ok = sim.apply_action(action)
+            elapsed_control_time += control_dt
             if not ok:
                 reset_count += 1
+                reason = sim.safety_reason() or "unknown"
                 print(
                     "[WARN] MuJoCo unstable state detected; resetting "
-                    f"(reset_count={reset_count}, t={sim.data.time:.3f}s).",
+                    f"(reset_count={reset_count}, t={elapsed_control_time:.3f}s, "
+                    f"sim_t={sim.data.time:.3f}s, reason={reason}).",
                     flush=True,
                 )
                 if args.disable_safety_reset:
                     break
+                if args.max_resets > 0 and reset_count >= args.max_resets:
+                    print(f"[WARN] Max reset count reached ({args.max_resets}); stopping.", flush=True)
+                    break
                 sim.reset()
-                last_print = 0.0
                 continue
 
             if viewer is not None:
                 viewer.sync()
 
-            if sim.data.time - last_print >= args.print_interval:
+            if elapsed_control_time - last_print >= args.print_interval:
                 vel = sim.measured_velocity()
                 print(
                     "[INFO] "
-                    f"t={sim.data.time:6.2f}s "
+                    f"t={elapsed_control_time:6.2f}s sim_t={sim.data.time:6.2f}s "
                     f"cmd=({_format_command(sim.command)}) "
                     f"vel_x={vel[0]: .3f} vel_y={vel[1]: .3f} "
                     f"action_mean_abs={np.mean(np.abs(action)): .3f} "
@@ -614,7 +754,7 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
                 )
                 if args.debug_obs:
                     print(sim.debug_summary(obs, action), flush=True)
-                last_print = sim.data.time
+                last_print = elapsed_control_time
 
             if args.real_time:
                 elapsed = time.time() - step_start
@@ -624,7 +764,8 @@ def _run_loop(policy, sim: BpxMujocoSim, args, viewer=None):
             step += 1
 
     print(
-        f"[INFO] MuJoCo sim2sim finished at t={sim.data.time:.2f}s, "
+        f"[INFO] MuJoCo sim2sim finished at t={elapsed_control_time:.2f}s "
+        f"(sim_t={sim.data.time:.2f}s), "
         f"wall={time.time() - start_wall:.2f}s, resets={reset_count}."
     )
 
@@ -638,7 +779,7 @@ def main():
     parser.add_argument("--step_height", "--step-height", dest="step_height", type=float, default=0.08)
     parser.add_argument("--step_width", "--step-width", dest="step_width", type=float, default=0.35)
     parser.add_argument("--num_steps", "--num-steps", dest="num_steps", type=int, default=5)
-    parser.add_argument("--command_x", "--command-x", dest="command_x", type=float, default=0.6)
+    parser.add_argument("--command_x", "--command-x", dest="command_x", type=float, default=0.3)
     parser.add_argument("--command_y", "--command-y", dest="command_y", type=float, default=0.0)
     parser.add_argument("--command_yaw", "--command-yaw", dest="command_yaw", type=float, default=0.0)
     parser.add_argument("--interactive", action="store_true", default=False)
@@ -665,18 +806,34 @@ def main():
     parser.add_argument("--armature", type=float, default=None, help="Override actuated joint armature.")
     parser.add_argument("--joint_friction", "--joint-friction", dest="joint_friction", type=float, default=None)
     parser.add_argument("--joint_limit_margin", "--joint-limit-margin", dest="joint_limit_margin", type=float, default=0.03)
-    parser.add_argument("--stand_warmup", "--stand-warmup", dest="stand_warmup", type=float, default=0.5)
-    parser.add_argument("--min_base_height", "--min-base-height", dest="min_base_height", type=float, default=0.06)
+    parser.add_argument("--stand_warmup", "--stand-warmup", dest="stand_warmup", type=float, default=0.0)
+    parser.add_argument("--min_base_height", "--min-base-height", dest="min_base_height", type=float, default=0.18)
     parser.add_argument("--max_base_height", "--max-base-height", dest="max_base_height", type=float, default=1.5)
     parser.add_argument("--max_qvel", "--max-qvel", dest="max_qvel", type=float, default=80.0)
+    parser.add_argument("--max_resets", "--max-resets", dest="max_resets", type=int, default=10)
+    parser.add_argument(
+        "--min_upright_gravity_z",
+        "--min-upright-gravity-z",
+        dest="min_upright_gravity_z",
+        type=float,
+        default=-0.2,
+        help=(
+            "Safety threshold for projected gravity z. Upright is near -1; reset when z is greater than this. "
+            "Use a value above 1.0 to disable orientation safety."
+        ),
+    )
+    parser.add_argument("--geom_friction", "--geom-friction", dest="geom_friction", type=float, default=0.6)
     parser.add_argument("--disable_safety_reset", "--disable-safety-reset", dest="disable_safety_reset", action="store_true", default=False)
     parser.add_argument(
         "--joint_order",
         "--joint-order",
         dest="joint_order",
-        choices=("metadata", "type_major", "alphabetical"),
-        default="metadata",
-        help="Joint order used for policy observations/actions. metadata is the exported order; type_major tests roll/pitch/knee grouped by joint type.",
+        choices=("metadata", "type_major", "leg_major", "alphabetical"),
+        default="type_major",
+        help=(
+            "Joint order used for policy observations/actions. BPX IsaacLab policies use type_major "
+            "(all roll, all pitch, all knee). metadata and leg_major are kept for deployment A/B checks."
+        ),
     )
     parser.add_argument(
         "--history_layout",
@@ -734,6 +891,7 @@ def main():
         args.step_height,
         args.step_width,
         args.num_steps,
+        args.geom_friction,
     )
     sim = BpxMujocoSim(mujoco, model, metadata, args)
 
@@ -750,13 +908,16 @@ def main():
         f"kp={sim.kp:.4f}, kd={sim.kd:.4f}, effort={sim.effort_limit:.2f}, "
         f"armature={sim.armature:.4f}, joint_friction={sim.joint_friction:.4f}, "
         f"action_scale_mean={float(np.mean(sim.action_scale)):.4f}, "
-        f"clip_actions={args.clip_actions:.2f}, clip_targets={args.clip_targets}"
+        f"clip_actions={args.clip_actions:.2f}, clip_targets={args.clip_targets}, "
+        f"geom_friction={args.geom_friction:.2f}, min_height={args.min_base_height:.2f}, "
+        f"min_upright_gz={args.min_upright_gravity_z:.2f}"
     )
     print(f"[INFO] Joint order: {sim.joint_names}", flush=True)
-    if args.flip_hip_roll or args.flip_hip_pitch or args.flip_knee:
+    if np.any(sim.action_sign != 1.0) or args.flip_hip_roll or args.flip_hip_pitch or args.flip_knee:
         print(
             "[INFO] Action sign flips: "
-            f"hip_roll={args.flip_hip_roll}, hip_pitch={args.flip_hip_pitch}, knee={args.flip_knee}",
+            f"sign={sim.action_sign.tolist()}, "
+            f"extra_flags(hip_roll={args.flip_hip_roll}, hip_pitch={args.flip_hip_pitch}, knee={args.flip_knee})",
             flush=True,
         )
 

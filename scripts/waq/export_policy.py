@@ -24,6 +24,7 @@ from isaaclab_waq.assets.robots.bpx_constants import (
     BPX_DAMPING_RATIO,
     BPX_DEFAULT_BASE_HEIGHT,
     BPX_EFFORT_LIMIT,
+    BPX_MUJOCO_ACTION_SIGN,
     BPX_NATURAL_FREQUENCY,
     BPX_STAND_JOINT_POS,
     BPX_STIFFNESS,
@@ -40,16 +41,16 @@ LEGACY_ACTION_SCALE = 0.25 * BPX_EFFORT_LIMIT / LEGACY_STIFFNESS
 
 JOINT_NAMES = [
     "fl_hip_roll_joint",
-    "fl_hip_pitch_joint",
-    "fl_knee_joint",
     "fr_hip_roll_joint",
-    "fr_hip_pitch_joint",
-    "fr_knee_joint",
     "hl_hip_roll_joint",
-    "hl_hip_pitch_joint",
-    "hl_knee_joint",
     "hr_hip_roll_joint",
+    "fl_hip_pitch_joint",
+    "fr_hip_pitch_joint",
+    "hl_hip_pitch_joint",
     "hr_hip_pitch_joint",
+    "fl_knee_joint",
+    "fr_knee_joint",
+    "hl_knee_joint",
     "hr_knee_joint",
 ]
 
@@ -184,6 +185,16 @@ def _joint_action_scale(name: str, action_scale: dict[str, float]) -> float:
     raise KeyError(name)
 
 
+def _joint_action_sign(name: str) -> float:
+    if name.endswith("_hip_roll_joint"):
+        return float(BPX_MUJOCO_ACTION_SIGN[".*_hip_roll_joint"])
+    if name.endswith("_hip_pitch_joint"):
+        return float(BPX_MUJOCO_ACTION_SIGN[".*_hip_pitch_joint"])
+    if name.endswith("_knee_joint"):
+        return float(BPX_MUJOCO_ACTION_SIGN[".*_knee_joint"])
+    raise KeyError(name)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export a DreamWaQ checkpoint for sim2sim deployment.")
     parser.add_argument("--checkpoint", required=True, help="Path to a DreamWaQ model_*.pt checkpoint.")
@@ -245,9 +256,11 @@ def main():
         "num_history_obs": dims["num_history_obs"],
         "history_length": dims["history_length"],
         "num_actions": dims["num_actions"],
+        "joint_order": "type_major",
         "joint_names": JOINT_NAMES,
         "default_joint_pos": [_joint_default(name) for name in JOINT_NAMES],
         "action_scale": [_joint_action_scale(name, control_profile["action_scale"]) for name in JOINT_NAMES],
+        "action_sign": [_joint_action_sign(name) for name in JOINT_NAMES],
         "base_height": float(BPX_DEFAULT_BASE_HEIGHT),
         "control": {
             "profile": control_profile["profile"],
@@ -273,7 +286,8 @@ def main():
         "history_layout": "term_major_oldest_to_newest",
         "notes": (
             "IsaacLab flattens history per observation term, then concatenates terms: "
-            "[term0_oldest..newest, term1_oldest..newest, ...]."
+            "[term0_oldest..newest, term1_oldest..newest, ...]. "
+            "BPX actions use type-major joint order: all hip-roll joints, all hip-pitch joints, then knees."
         ),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import pathlib
 import sys
 from dataclasses import asdict
@@ -17,26 +16,17 @@ sys.path.insert(0, str(_PROJECT_ROOT / "source" / "isaaclab_waq"))
 
 from isaaclab_waq.algorithms.waq.actor_critic import DreamWaQActorCritic
 from isaaclab_waq.algorithms.waq.config import DreamWaQPolicyCfg
-
-
-BPX_EFFORT_LIMIT = 30.0
-BPX_ARMATURE = 0.005
-BPX_NATURAL_FREQUENCY = 10.0 * 2.0 * math.pi
-BPX_DAMPING_RATIO = 2.0
-BPX_STIFFNESS = BPX_ARMATURE * BPX_NATURAL_FREQUENCY**2
-BPX_DAMPING = 2.0 * BPX_DAMPING_RATIO * BPX_ARMATURE * BPX_NATURAL_FREQUENCY
-BPX_DEFAULT_BASE_HEIGHT = 0.42
-BPX_DEFAULT_ACTION_SCALE = 0.25 * BPX_EFFORT_LIMIT / BPX_STIFFNESS
-BPX_STAND_JOINT_POS = {
-    ".*_hip_roll_joint": 0.0,
-    ".*_hip_pitch_joint": 0.60,
-    ".*_knee_joint": -1.20,
-}
-BPX_ACTION_SCALE = {
-    ".*_hip_roll_joint": BPX_DEFAULT_ACTION_SCALE,
-    ".*_hip_pitch_joint": BPX_DEFAULT_ACTION_SCALE,
-    ".*_knee_joint": BPX_DEFAULT_ACTION_SCALE,
-}
+from isaaclab_waq.assets.robots.bpx_constants import (
+    BPX_ACTION_SCALE,
+    BPX_ARMATURE,
+    BPX_DAMPING,
+    BPX_DAMPING_RATIO,
+    BPX_DEFAULT_BASE_HEIGHT,
+    BPX_EFFORT_LIMIT,
+    BPX_NATURAL_FREQUENCY,
+    BPX_STAND_JOINT_POS,
+    BPX_STIFFNESS,
+)
 
 
 JOINT_NAMES = [
@@ -214,6 +204,8 @@ def main():
             "damping": float(BPX_DAMPING),
             "effort_limit": float(BPX_EFFORT_LIMIT),
             "armature": float(BPX_ARMATURE),
+            "natural_frequency": float(BPX_NATURAL_FREQUENCY),
+            "damping_ratio": float(BPX_DAMPING_RATIO),
             "joint_friction": 0.01,
             "policy_dt": 0.02,
             "sim_dt": 0.005,

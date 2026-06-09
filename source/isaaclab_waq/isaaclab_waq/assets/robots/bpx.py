@@ -6,36 +6,25 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
+from .bpx_constants import (
+    BASE_BODY_NAME,
+    BPX_ACTION_SCALE,
+    BPX_ARMATURE,
+    BPX_DAMPING,
+    BPX_DEFAULT_BASE_HEIGHT,
+    BPX_EFFORT_LIMIT,
+    BPX_STAND_JOINT_POS,
+    BPX_STIFFNESS,
+    CONTROLLED_JOINT_NAMES,
+    FEET_BODY_NAMES,
+    FEET_BODY_NAMES_ORDERED,
+    UNDESIRED_BODY_NAMES,
+)
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 BPX_USD_PATH = _REPO_ROOT / "assets" / "BPX" / "usd" / "bpx.usd"
 BPX_PLAY_USD_PATH = _REPO_ROOT / "assets" / "BPX" / "usd" / "bpx_play.usda"
-
-BASE_BODY_NAME = "torso"
-FEET_BODY_NAMES = ".*_toe_link"
-FEET_BODY_NAMES_ORDERED = ["fl_toe_link", "fr_toe_link", "hl_toe_link", "hr_toe_link"]
-UNDESIRED_BODY_NAMES = [".*_hip_link", ".*_thigh_link", ".*_calf_link"]
-CONTROLLED_JOINT_NAMES = [".*_hip_roll_joint", ".*_hip_pitch_joint", ".*_knee_joint"]
-
-BPX_EFFORT_LIMIT = 30.0
-BPX_ARMATURE = 0.005
-BPX_NATURAL_FREQUENCY = 10.0 * 2.0 * 3.1415926535
-BPX_DAMPING_RATIO = 2.0
-BPX_STIFFNESS = BPX_ARMATURE * BPX_NATURAL_FREQUENCY**2
-BPX_DAMPING = 2.0 * BPX_DAMPING_RATIO * BPX_ARMATURE * BPX_NATURAL_FREQUENCY
-BPX_DEFAULT_BASE_HEIGHT = 0.42
-BPX_DEFAULT_ACTION_SCALE = 0.25 * BPX_EFFORT_LIMIT / BPX_STIFFNESS
-BPX_ACTION_SCALE = {
-    ".*_hip_roll_joint": BPX_DEFAULT_ACTION_SCALE,
-    ".*_hip_pitch_joint": BPX_DEFAULT_ACTION_SCALE,
-    ".*_knee_joint": BPX_DEFAULT_ACTION_SCALE,
-}
-
-BPX_STAND_JOINT_POS = {
-    ".*_hip_roll_joint": 0.0,
-    ".*_hip_pitch_joint": 0.60,
-    ".*_knee_joint": -1.20,
-}
 
 def _make_bpx_cfg(usd_path: Path) -> ArticulationCfg:
     return ArticulationCfg(

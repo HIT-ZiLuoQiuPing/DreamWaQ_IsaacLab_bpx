@@ -471,7 +471,7 @@ class RewardsCfg:
         params={"command_name": "base_velocity"},
     )
     lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-3.0)
-    ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.12)
+    ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.08)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.90)
     base_height = RewTerm(
         func=mdp.base_height_above_terrain_l2,
@@ -484,13 +484,13 @@ class RewardsCfg:
         params={"target_height": 0.43, "sensor_cfg": SceneEntityCfg("height_scanner")},
     )
     joint_vel = RewTerm(func=mdp.joint_vel_l2, weight=-4.0e-4)
-    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-5.0e-8)
+    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-8)
     joint_torques = RewTerm(func=mdp.joint_torques_l2, weight=-2.0e-5)
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.12)
-    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.015)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.008)
     torque_saturation = RewTerm(
         func=mdp.applied_torque_limits,
-        weight=-0.01,
+        weight=-0.006,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES)},
     )
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import sys
 from dataclasses import asdict
@@ -27,6 +28,14 @@ from isaaclab_waq.assets.robots.bpx_constants import (
     BPX_STAND_JOINT_POS,
     BPX_STIFFNESS,
 )
+
+LEGACY_PROFILE_NAME = "legacy_mjlab_10hz"
+LEGACY_ARMATURE = 0.005
+LEGACY_NATURAL_FREQUENCY = 10.0 * 2.0 * math.pi
+LEGACY_DAMPING_RATIO = 2.0
+LEGACY_STIFFNESS = LEGACY_ARMATURE * LEGACY_NATURAL_FREQUENCY**2
+LEGACY_DAMPING = 2.0 * LEGACY_DAMPING_RATIO * LEGACY_ARMATURE * LEGACY_NATURAL_FREQUENCY
+LEGACY_ACTION_SCALE = 0.25 * BPX_EFFORT_LIMIT / LEGACY_STIFFNESS
 
 
 JOINT_NAMES = [
@@ -134,13 +143,44 @@ def _joint_default(name: str) -> float:
     raise KeyError(name)
 
 
-def _joint_action_scale(name: str) -> float:
+def _control_profile(profile_name: str) -> dict:
+    if profile_name == "current":
+        return {
+            "profile": "current",
+            "action_scale": dict(BPX_ACTION_SCALE),
+            "stiffness": float(BPX_STIFFNESS),
+            "damping": float(BPX_DAMPING),
+            "effort_limit": float(BPX_EFFORT_LIMIT),
+            "armature": float(BPX_ARMATURE),
+            "natural_frequency": float(BPX_NATURAL_FREQUENCY),
+            "damping_ratio": float(BPX_DAMPING_RATIO),
+        }
+    if profile_name == LEGACY_PROFILE_NAME:
+        action_scale = {
+            ".*_hip_roll_joint": LEGACY_ACTION_SCALE,
+            ".*_hip_pitch_joint": LEGACY_ACTION_SCALE,
+            ".*_knee_joint": LEGACY_ACTION_SCALE,
+        }
+        return {
+            "profile": LEGACY_PROFILE_NAME,
+            "action_scale": action_scale,
+            "stiffness": float(LEGACY_STIFFNESS),
+            "damping": float(LEGACY_DAMPING),
+            "effort_limit": float(BPX_EFFORT_LIMIT),
+            "armature": float(LEGACY_ARMATURE),
+            "natural_frequency": float(LEGACY_NATURAL_FREQUENCY),
+            "damping_ratio": float(LEGACY_DAMPING_RATIO),
+        }
+    raise ValueError(f"Unsupported control profile: {profile_name}")
+
+
+def _joint_action_scale(name: str, action_scale: dict[str, float]) -> float:
     if name.endswith("_hip_roll_joint"):
-        return float(BPX_ACTION_SCALE[".*_hip_roll_joint"])
+        return float(action_scale[".*_hip_roll_joint"])
     if name.endswith("_hip_pitch_joint"):
-        return float(BPX_ACTION_SCALE[".*_hip_pitch_joint"])
+        return float(action_scale[".*_hip_pitch_joint"])
     if name.endswith("_knee_joint"):
-        return float(BPX_ACTION_SCALE[".*_knee_joint"])
+        return float(action_scale[".*_knee_joint"])
     raise KeyError(name)
 
 
@@ -153,6 +193,15 @@ def main():
         help="Output TorchScript path. Defaults to <checkpoint_dir>/policy_jit.pt.",
     )
     parser.add_argument("--device", default="cpu", help="Torch device used for export.")
+    parser.add_argument(
+        "--control-profile",
+        choices=("current", LEGACY_PROFILE_NAME),
+        default="current",
+        help=(
+            "Deployment control metadata profile. Use current for new checkpoints trained after actuator "
+            f"alignment; use {LEGACY_PROFILE_NAME} only for older checkpoints."
+        ),
+    )
     args = parser.parse_args()
 
     checkpoint_path = pathlib.Path(args.checkpoint).expanduser().resolve()
@@ -163,6 +212,7 @@ def main():
     state_dict = checkpoint["model_state_dict"]
     policy_cfg = _policy_cfg_from_checkpoint(checkpoint, state_dict)
     dims = _infer_dimensions(state_dict, policy_cfg.latent_dim)
+    control_profile = _control_profile(args.control_profile)
 
     policy = DreamWaQActorCritic(
         dims["num_actor_obs"],
@@ -197,15 +247,16 @@ def main():
         "num_actions": dims["num_actions"],
         "joint_names": JOINT_NAMES,
         "default_joint_pos": [_joint_default(name) for name in JOINT_NAMES],
-        "action_scale": [_joint_action_scale(name) for name in JOINT_NAMES],
+        "action_scale": [_joint_action_scale(name, control_profile["action_scale"]) for name in JOINT_NAMES],
         "base_height": float(BPX_DEFAULT_BASE_HEIGHT),
         "control": {
-            "stiffness": float(BPX_STIFFNESS),
-            "damping": float(BPX_DAMPING),
-            "effort_limit": float(BPX_EFFORT_LIMIT),
-            "armature": float(BPX_ARMATURE),
-            "natural_frequency": float(BPX_NATURAL_FREQUENCY),
-            "damping_ratio": float(BPX_DAMPING_RATIO),
+            "profile": control_profile["profile"],
+            "stiffness": control_profile["stiffness"],
+            "damping": control_profile["damping"],
+            "effort_limit": control_profile["effort_limit"],
+            "armature": control_profile["armature"],
+            "natural_frequency": control_profile["natural_frequency"],
+            "damping_ratio": control_profile["damping_ratio"],
             "joint_friction": 0.01,
             "policy_dt": 0.02,
             "sim_dt": 0.005,
@@ -236,9 +287,10 @@ def main():
     )
     print(
         "[INFO] Control: "
-        f"kp={BPX_STIFFNESS:.4f}, kd={BPX_DAMPING:.4f}, "
-        f"effort={BPX_EFFORT_LIMIT:.2f}, armature={BPX_ARMATURE:.4f}, "
-        f"joint_friction=0.0100, action_scale={next(iter(BPX_ACTION_SCALE.values())):.4f}"
+        f"profile={control_profile['profile']}, kp={control_profile['stiffness']:.4f}, "
+        f"kd={control_profile['damping']:.4f}, effort={control_profile['effort_limit']:.2f}, "
+        f"armature={control_profile['armature']:.4f}, joint_friction=0.0100, "
+        f"action_scale={next(iter(control_profile['action_scale'].values())):.4f}"
     )
 
 

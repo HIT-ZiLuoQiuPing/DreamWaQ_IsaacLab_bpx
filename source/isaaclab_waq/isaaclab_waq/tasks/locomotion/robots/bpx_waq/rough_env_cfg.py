@@ -619,15 +619,15 @@ class CurriculumCfg:
         func=mdp.terrain_levels_vel,
         params={
             "command_name": "base_velocity",
-            "promotion_distance_ratio": 0.75,
-            "promotion_command_ratio": None,
+            "promotion_distance_ratio": 0.55,
+            "promotion_command_ratio": 0.55,
             "demotion_command_ratio": 0.5,
-            "minimum_promotion_distance": 0.0,
-            "warmup_steps": 1000 * 16,
-            "level_step_interval": 1500 * 16,
-            "consecutive_successes": 2,
+            "minimum_promotion_distance": 2.0,
+            "warmup_steps": 300 * 16,
+            "level_step_interval": 800 * 16,
+            "consecutive_successes": 1,
             "demote_only_early_termination": True,
-            "min_level_hold_steps": 500 * 16,
+            "min_level_hold_steps": 250 * 16,
         },
     )
     command_vel = CurrTerm(
@@ -712,7 +712,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         if getattr(self.curriculum, "terrain_levels", None) is not None:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = True
-                self.scene.terrain.max_init_terrain_level = 0
+                self.scene.terrain.max_init_terrain_level = 1
         else:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = False

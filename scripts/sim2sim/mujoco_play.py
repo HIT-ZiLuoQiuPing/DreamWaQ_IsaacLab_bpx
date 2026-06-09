@@ -591,7 +591,7 @@ def main():
         "--clip-actions",
         dest="clip_actions",
         type=float,
-        default=2.0,
+        default=4.0,
         help="Raw policy action safety clip. Use 0 to disable.",
     )
     parser.add_argument("--kp_multiplier", "--kp-multiplier", dest="kp_multiplier", type=float, default=1.0)

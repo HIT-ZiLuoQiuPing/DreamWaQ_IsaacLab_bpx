@@ -158,13 +158,13 @@ class CommandsCfg:
         heading_control_stiffness=0.5,
         debug_vis=False,
         ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.10, 0.75),
+            lin_vel_x=(-0.10, 0.65),
             lin_vel_y=(-0.10, 0.10),
             ang_vel_z=(-0.25, 0.25),
             heading=(-math.pi, math.pi),
         ),
         forward_ranges=mdp.ForwardBiasedVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.75),
+            lin_vel_x=(0.0, 0.65),
             lin_vel_y=(-0.10, 0.10),
             ang_vel_z=(-0.25, 0.25),
             heading=(-math.pi, math.pi),
@@ -345,8 +345,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
-            "stiffness_distribution_params": (0.75, 1.35),
-            "damping_distribution_params": (0.75, 1.45),
+            "stiffness_distribution_params": (0.85, 1.20),
+            "damping_distribution_params": (0.85, 1.30),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -357,8 +357,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
-            "friction_distribution_params": (0.50, 2.00),
-            "armature_distribution_params": (0.70, 1.40),
+            "friction_distribution_params": (0.75, 1.50),
+            "armature_distribution_params": (0.85, 1.25),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -369,7 +369,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES),
-            "effort_limit_distribution_params": (0.80, 1.20),
+            "effort_limit_distribution_params": (0.90, 1.10),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -490,7 +490,7 @@ class RewardsCfg:
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.015)
     torque_saturation = RewTerm(
         func=mdp.applied_torque_limits,
-        weight=-0.02,
+        weight=-0.01,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=CONTROLLED_JOINT_NAMES)},
     )
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
@@ -637,13 +637,13 @@ class CurriculumCfg:
             "velocity_stages": [
                 {
                     "step": 0,
-                    "lin_vel_x": (-0.10, 0.75),
+                    "lin_vel_x": (-0.10, 0.65),
                     "lin_vel_y": (-0.10, 0.10),
                     "ang_vel_z": (-0.25, 0.25),
                 },
                 {
                     "step": 3000 * 16,
-                    "lin_vel_x": (-0.15, 0.95),
+                    "lin_vel_x": (-0.15, 0.90),
                     "lin_vel_y": (-0.14, 0.14),
                     "ang_vel_z": (-0.32, 0.32),
                 },
@@ -712,7 +712,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         if getattr(self.curriculum, "terrain_levels", None) is not None:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = True
-                self.scene.terrain.max_init_terrain_level = 1
+                self.scene.terrain.max_init_terrain_level = 0
         else:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = False

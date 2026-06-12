@@ -1,0 +1,65 @@
+poses:
+  stand_standard:
+    description: IsaacLab WAQ exported default_joint_pos from model_42000.pt. This
+      is used as the neutral stand before starting the current deploy policy.
+    joints:
+      fl_hip_roll_joint: 0.0
+      fr_hip_roll_joint: 0.0
+      hl_hip_roll_joint: 0.0
+      hr_hip_roll_joint: 0.0
+      fl_hip_pitch_joint: 0.6
+      fr_hip_pitch_joint: 0.6
+      hl_hip_pitch_joint: 0.6
+      hr_hip_pitch_joint: 0.6
+      fl_knee_joint: -1.2
+      fr_knee_joint: -1.2
+      hl_knee_joint: -1.2
+      hr_knee_joint: -1.2
+  sit_crouch:
+    description: 'Crouch/zero theory pose measured by xwk: hip_roll=0.00, hip_pitch=1.17,
+      knee=-2.78 rad. Used ONLY for crouch calibration / sit pose, not policy default.'
+    joints:
+      fl_hip_roll_joint: 0.0
+      fr_hip_roll_joint: 0.0
+      hl_hip_roll_joint: 0.0
+      hr_hip_roll_joint: 0.0
+      fl_hip_pitch_joint: 1.17
+      fr_hip_pitch_joint: 1.17
+      hl_hip_pitch_joint: 1.17
+      hr_hip_pitch_joint: 1.17
+      fl_knee_joint: -2.78
+      fr_knee_joint: -2.78
+      hl_knee_joint: -2.78
+      hr_knee_joint: -2.78
+  sim2sim_default_joint_pos:
+    description: Read-only reference copy of MuJoCo sim2sim DEFAULT_JOINT_POS.
+    joints:
+      fl_hip_roll_joint: 0.0
+      fr_hip_roll_joint: 0.0
+      hl_hip_roll_joint: 0.0
+      hr_hip_roll_joint: 0.0
+      fl_hip_pitch_joint: 0.8
+      fr_hip_pitch_joint: 0.8
+      hl_hip_pitch_joint: 0.8
+      hr_hip_pitch_joint: 0.8
+      fl_knee_joint: -1.5
+      fr_knee_joint: -1.5
+      hl_knee_joint: -1.5
+      hr_knee_joint: -1.5
+  isaaclab_train_init_old_note:
+    description: Old IsaacLab BPX_CFG init_state had hip_roll +/-0.08. Do NOT use
+      this for strict sim2sim replay unless the exported policy/sim2sim demo uses
+      it.
+    joints:
+      fl_hip_roll_joint: 0.08
+      fr_hip_roll_joint: -0.08
+      hl_hip_roll_joint: 0.08
+      hr_hip_roll_joint: -0.08
+      fl_hip_pitch_joint: 0.8
+      fr_hip_pitch_joint: 0.8
+      hl_hip_pitch_joint: 0.8
+      hr_hip_pitch_joint: 0.8
+      fl_knee_joint: -1.5
+      fr_knee_joint: -1.5
+      hl_knee_joint: -1.5
+      hr_knee_joint: -1.5

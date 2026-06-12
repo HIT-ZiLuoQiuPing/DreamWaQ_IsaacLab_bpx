@@ -276,9 +276,9 @@ def main():
             "decimation": 4,
         },
         "observation_order": [
-            "base_ang_vel*0.2",
+            "base_ang_vel*0.25",
             "projected_gravity",
-            "velocity_command",
+            "velocity_command*[2.0,2.0,0.25]",
             "joint_pos-default_joint_pos",
             "joint_vel*0.05",
             "last_action",

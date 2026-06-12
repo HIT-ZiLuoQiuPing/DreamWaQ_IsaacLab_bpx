@@ -150,6 +150,9 @@ class DreamWaQRunner:
             diagnostic_stat_count = 0
             base_height_sum = 0.0
             base_height_min: float | None = None
+            base_height_low_rate_sum = 0.0
+            hip_roll_abs_sum = 0.0
+            hind_hip_roll_abs_sum = 0.0
             roll_pitch_sum = 0.0
             roll_pitch_max: float | None = None
             forward_distance_sum = 0.0
@@ -187,6 +190,9 @@ class DreamWaQRunner:
                             if base_height_min is None
                             else min(base_height_min, diagnostics["base_height_min"])
                         )
+                        base_height_low_rate_sum += diagnostics["base_height_low_rate"]
+                        hip_roll_abs_sum += diagnostics["hip_roll_abs_mean"]
+                        hind_hip_roll_abs_sum += diagnostics["hind_hip_roll_abs_mean"]
                         roll_pitch_sum += diagnostics["roll_pitch_mean"]
                         roll_pitch_max = (
                             diagnostics["roll_pitch_max"]
@@ -290,6 +296,9 @@ class DreamWaQRunner:
                     "velocity_x": velocity_x_sum / max(rollout_stat_count, 1),
                     "base_height_mean": base_height_sum / max(diagnostic_stat_count, 1),
                     "base_height_min": base_height_min if base_height_min is not None else 0.0,
+                    "base_height_low_rate": base_height_low_rate_sum / max(diagnostic_stat_count, 1),
+                    "hip_roll_abs_mean": hip_roll_abs_sum / max(diagnostic_stat_count, 1),
+                    "hind_hip_roll_abs_mean": hind_hip_roll_abs_sum / max(diagnostic_stat_count, 1),
                     "roll_pitch_mean": roll_pitch_sum / max(diagnostic_stat_count, 1),
                     "roll_pitch_max": roll_pitch_max if roll_pitch_max is not None else 0.0,
                     "forward_distance_mean": forward_distance_sum / max(diagnostic_stat_count, 1),
@@ -493,6 +502,33 @@ class DreamWaQRunner:
         roll_pitch = torch.acos(torch.clamp(-projected_gravity[:, 2], -1.0, 1.0))
         stable = (relative_height > 0.30) & (roll_pitch < 0.65)
         fall_like = ~stable
+        base_height_low = relative_height < 0.37
+
+        hip_roll_abs_mean = 0.0
+        hind_hip_roll_abs_mean = 0.0
+        joint_names = getattr(asset, "joint_names", None)
+        joint_pos = getattr(asset.data, "joint_pos", None)
+        default_joint_pos = getattr(asset.data, "default_joint_pos", None)
+        if isinstance(joint_names, (list, tuple)) and isinstance(joint_pos, torch.Tensor):
+            joint_pos = joint_pos.to(self.device)
+            if isinstance(default_joint_pos, torch.Tensor):
+                default_joint_pos = default_joint_pos.to(self.device)
+            else:
+                default_joint_pos = torch.zeros_like(joint_pos)
+            hip_roll_ids = [index for index, name in enumerate(joint_names) if str(name).endswith("_hip_roll_joint")]
+            hind_hip_roll_ids = [
+                index
+                for index, name in enumerate(joint_names)
+                if str(name) in ("hl_hip_roll_joint", "hr_hip_roll_joint")
+            ]
+            if hip_roll_ids:
+                ids = torch.as_tensor(hip_roll_ids, dtype=torch.long, device=self.device)
+                hip_roll_abs = torch.abs(joint_pos[:, ids] - default_joint_pos[:, ids])
+                hip_roll_abs_mean = float(hip_roll_abs.mean().item())
+            if hind_hip_roll_ids:
+                ids = torch.as_tensor(hind_hip_roll_ids, dtype=torch.long, device=self.device)
+                hind_hip_roll_abs = torch.abs(joint_pos[:, ids] - default_joint_pos[:, ids])
+                hind_hip_roll_abs_mean = float(hind_hip_roll_abs.mean().item())
 
         env_origins = getattr(scene, "env_origins", None)
         if isinstance(env_origins, torch.Tensor):
@@ -528,6 +564,9 @@ class DreamWaQRunner:
         return {
             "base_height_mean": float(relative_height.mean().item()),
             "base_height_min": float(relative_height.min().item()),
+            "base_height_low_rate": float(base_height_low.float().mean().item()),
+            "hip_roll_abs_mean": hip_roll_abs_mean,
+            "hind_hip_roll_abs_mean": hind_hip_roll_abs_mean,
             "roll_pitch_mean": float(roll_pitch.mean().item()),
             "roll_pitch_max": float(roll_pitch.max().item()),
             "forward_distance_mean": float(forward_distance.mean().item()),
@@ -694,6 +733,9 @@ class DreamWaQRunner:
         fall_like_rate = float(rollout_stats.get("fall_like_rate", 0.0) or 0.0)
         base_height_mean = float(rollout_stats.get("base_height_mean", 0.0) or 0.0)
         base_height_min = float(rollout_stats.get("base_height_min", 0.0) or 0.0)
+        base_height_low_rate = float(rollout_stats.get("base_height_low_rate", 0.0) or 0.0)
+        hip_roll_abs_mean = float(rollout_stats.get("hip_roll_abs_mean", 0.0) or 0.0)
+        hind_hip_roll_abs_mean = float(rollout_stats.get("hind_hip_roll_abs_mean", 0.0) or 0.0)
         roll_pitch_mean = float(rollout_stats.get("roll_pitch_mean", 0.0) or 0.0)
         roll_pitch_max = float(rollout_stats.get("roll_pitch_max", 0.0) or 0.0)
         forward_distance_mean = float(rollout_stats.get("forward_distance_mean", 0.0) or 0.0)
@@ -765,6 +807,9 @@ class DreamWaQRunner:
             self.writer.add_scalar("Diagnostics/fall_like_rate", fall_like_rate, iteration)
             self.writer.add_scalar("Diagnostics/base_height_mean", base_height_mean, iteration)
             self.writer.add_scalar("Diagnostics/base_height_min", base_height_min, iteration)
+            self.writer.add_scalar("Diagnostics/base_height_low_rate", base_height_low_rate, iteration)
+            self.writer.add_scalar("Diagnostics/hip_roll_abs_mean", hip_roll_abs_mean, iteration)
+            self.writer.add_scalar("Diagnostics/hind_hip_roll_abs_mean", hind_hip_roll_abs_mean, iteration)
             self.writer.add_scalar("Diagnostics/roll_pitch_mean", roll_pitch_mean, iteration)
             self.writer.add_scalar("Diagnostics/roll_pitch_max", roll_pitch_max, iteration)
             self.writer.add_scalar("Diagnostics/forward_distance_mean", forward_distance_mean, iteration)
@@ -829,6 +874,11 @@ class DreamWaQRunner:
                 self._line("Diagnostics/fall_like_rate", f"{fall_like_rate:.4f}"),
                 self._line("Diagnostics/task_success_rate", f"{task_success_rate:.4f}"),
                 self._line("Diagnostics/base_height mean/min", f"{base_height_mean:.3f} / {base_height_min:.3f}"),
+                self._line("Diagnostics/base low rate", f"{base_height_low_rate:.4f}"),
+                self._line(
+                    "Diagnostics/hip roll abs",
+                    f"{hip_roll_abs_mean:.4f} / hind {hind_hip_roll_abs_mean:.4f}",
+                ),
                 self._line("Diagnostics/roll_pitch mean/max", f"{roll_pitch_mean:.3f} / {roll_pitch_max:.3f}"),
                 self._line(
                     "Diagnostics/dist/cmd_dist",

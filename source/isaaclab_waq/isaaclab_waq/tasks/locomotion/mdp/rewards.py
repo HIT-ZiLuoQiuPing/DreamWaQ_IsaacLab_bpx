@@ -6,11 +6,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-try:
-    from isaaclab.utils.math import quat_apply_inverse
-except ImportError:
-    from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
-
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
@@ -19,6 +14,7 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+# 惩罚关节速度和关节力矩共同带来的功率消耗，鼓励更省力的动作。
 def energy(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize absolute joint power."""
 
@@ -28,6 +24,7 @@ def energy(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("r
     return torch.sum(torch.abs(qvel) * torch.abs(qfrc), dim=-1)
 
 
+# 鼓励机身保持竖直，不要侧翻或前后翻。
 def upright_exp(
     env: ManagerBasedRLEnv,
     std: float = 0.5,
@@ -36,28 +33,12 @@ def upright_exp(
     """Reward keeping the base z-axis aligned with gravity."""
 
     asset: RigidObject = env.scene[asset_cfg.name]
+    # projected_gravity_b 是机体坐标系下的重力方向；机器人越直立，x/y 分量越小。
     tilt_error = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
     return torch.exp(-tilt_error / std**2)
 
 
-def root_height_below_terrain(
-    env: ManagerBasedRLEnv,
-    minimum_height: float,
-    sensor_cfg: SceneEntityCfg,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Terminate when root-link height above scanned terrain is too low."""
-
-    asset: RigidObject = env.scene[asset_cfg.name]
-    sensor = env.scene.sensors[sensor_cfg.name]
-    hits_z = sensor.data.ray_hits_w[..., 2]
-    fallback_height = asset.data.root_link_pos_w[:, 2].unsqueeze(1) - minimum_height
-    hits_z = torch.where(torch.isfinite(hits_z), hits_z, fallback_height)
-    terrain_height = torch.mean(hits_z, dim=1)
-    relative_height = asset.data.root_link_pos_w[:, 2] - terrain_height
-    return relative_height < minimum_height
-
-
+# 惩罚机身高度相对于目标高度的误差。这个奖励鼓励机器人保持在一个合适的高度，既不太低（可能会碰到地面），也不太高（可能会失去稳定性）。
 def base_height_above_terrain_l2(
     env: ManagerBasedRLEnv,
     target_height: float,
@@ -76,7 +57,8 @@ def base_height_above_terrain_l2(
     return torch.square(relative_height - target_height)
 
 
-def base_height_below_target_l2(
+# 只惩罚机身低于目标高度的部分，避免机器人塌低贴地，但不过度限制抬高动作。
+def base_height_below_target_l1(
     env: ManagerBasedRLEnv,
     target_height: float,
     sensor_cfg: SceneEntityCfg,
@@ -91,9 +73,10 @@ def base_height_below_target_l2(
     hits_z = torch.where(torch.isfinite(hits_z), hits_z, fallback_height)
     terrain_height = torch.mean(hits_z, dim=1)
     relative_height = asset.data.root_link_pos_w[:, 2] - terrain_height
-    return torch.square(torch.clamp(target_height - relative_height, min=0.0))
+    return torch.clamp(target_height - relative_height, min=0.0)
 
 
+# 惩罚机身竖直方向速度，减少上下弹跳。
 def lin_vel_z_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize vertical root-link velocity."""
 
@@ -101,6 +84,7 @@ def lin_vel_z_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntity
     return torch.square(asset.data.root_link_lin_vel_b[:, 2])
 
 
+# 惩罚机身 roll/pitch 角速度，减少左右晃动和前后俯仰。
 def ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize roll/pitch root-link angular velocity."""
 
@@ -108,6 +92,7 @@ def ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntit
     return torch.sum(torch.square(asset.data.root_link_ang_vel_b[:, :2]), dim=1)
 
 
+# 平面速度跟踪奖励：机身 xy 线速度越接近指令，奖励越高。
 def track_lin_vel_xy_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -122,6 +107,7 @@ def track_lin_vel_xy_exp(
     return torch.exp(-error / std**2)
 
 
+# 偏航角速度跟踪奖励：机身 yaw 角速度越接近指令，奖励越高。
 def track_ang_vel_z_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -136,6 +122,7 @@ def track_ang_vel_z_exp(
     return torch.exp(-torch.square(error) / std**2)
 
 
+# 前进方向 x 速度精细跟踪奖励：std 更小，因此比整体 xy 跟踪更严格。
 def track_forward_velocity_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -150,58 +137,7 @@ def track_forward_velocity_exp(
     return torch.exp(-torch.square(error) / std**2)
 
 
-def forward_velocity_error_l1(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Penalize absolute forward velocity tracking error."""
-
-    asset: RigidObject = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-    return torch.abs(command[:, 0] - asset.data.root_link_lin_vel_b[:, 0])
-
-
-def no_forward_motion(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    min_command: float = 0.15,
-    min_velocity_ratio: float = 0.25,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Penalize standing still when a forward command is active."""
-
-    asset: RigidObject = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-    min_velocity = torch.clamp(command[:, 0] * min_velocity_ratio, min=0.0)
-    stalled = (command[:, 0] > min_command) & (asset.data.root_link_lin_vel_b[:, 0] < min_velocity)
-    return stalled.float()
-
-
-def crawl_penalty(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    min_command: float = 0.25,
-    min_velocity_ratio: float = 0.45,
-    action_threshold: float = 0.45,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Penalize high-action crawling when a forward command is not being tracked."""
-
-    asset: RigidObject = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-    action = getattr(env.action_manager, "action", None)
-    if action is None:
-        return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
-
-    command_x = command[:, 0]
-    velocity_x = asset.data.root_link_lin_vel_b[:, 0]
-    velocity_shortfall = torch.clamp(command_x * min_velocity_ratio - velocity_x, min=0.0)
-    action_excess = torch.clamp(torch.mean(torch.abs(action), dim=1) - action_threshold, min=0.0)
-    active = command_x > min_command
-    return velocity_shortfall * action_excess * active.float()
-
-
+# 侧向 y 速度精细跟踪奖励：侧向速度越接近指令，奖励越高。
 def track_lateral_velocity_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -216,6 +152,7 @@ def track_lateral_velocity_exp(
     return torch.exp(-torch.square(error) / std**2)
 
 
+# 偏航速度精细跟踪奖励：对 yaw 指令误差给更严格的指数奖励。
 def track_yaw_velocity_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -230,6 +167,7 @@ def track_yaw_velocity_exp(
     return torch.exp(-torch.square(error) / std**2)
 
 
+# 惩罚在前进命令下的侧向漂移。这个奖励鼓励机器人在有明显前进命令时，保持在前进方向上，而不是有过多的侧向移动。
 def forward_lateral_drift(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -250,6 +188,7 @@ def forward_lateral_drift(
     return torch.square(asset.data.root_link_lin_vel_b[:, 1]) * straight.float()
 
 
+# 惩罚前进命令下没有被指令要求的偏航角速度，避免边走边乱转。
 def forward_yaw_drift(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -270,6 +209,7 @@ def forward_yaw_drift(
     return torch.square(asset.data.root_link_ang_vel_b[:, 2]) * straight.float()
 
 
+# 惩罚关节偏离默认站姿；静止或低速时可通过 stand_still_scale 加强站姿约束。
 def joint_position_penalty(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
@@ -285,9 +225,14 @@ def joint_position_penalty(
         asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids],
         dim=1,
     )
-    return torch.where(torch.logical_or(cmd > 0.0, body_vel > velocity_threshold), penalty, stand_still_scale * penalty)
+    return torch.where(
+        torch.logical_or(cmd > 0.0, body_vel > velocity_threshold),
+        penalty,
+        stand_still_scale * penalty,
+    )
 
 
+# 惩罚足端横向撞到障碍或台阶侧壁，降低绊脚风险。
 def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize feet hitting vertical surfaces."""
 
@@ -297,126 +242,7 @@ def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Te
     return torch.any(forces_xy > 4.0 * forces_z, dim=1).float()
 
 
-def air_time_variance_penalty(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Penalize uneven foot air/contact timing."""
-
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    if contact_sensor.cfg.track_air_time is False:
-        raise RuntimeError("ContactSensor.track_air_time must be enabled for air_time_variance_penalty.")
-    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
-    last_contact_time = contact_sensor.data.last_contact_time[:, sensor_cfg.body_ids]
-    return torch.var(torch.clip(last_air_time, max=0.5), dim=1) + torch.var(
-        torch.clip(last_contact_time, max=0.5), dim=1
-    )
-
-
-def feet_gait(
-    env: ManagerBasedRLEnv,
-    period: float,
-    offset: list[float],
-    sensor_cfg: SceneEntityCfg,
-    threshold: float = 0.55,
-    command_name: str | None = None,
-) -> torch.Tensor:
-    """Reward feet matching a simple periodic contact schedule."""
-
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
-
-    global_phase = ((env.episode_length_buf * env.step_dt) % period / period).unsqueeze(1)
-    leg_phase = torch.cat([(global_phase + offset_) % 1.0 for offset_ in offset], dim=-1)
-
-    reward = torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
-    for index in range(len(sensor_cfg.body_ids)):
-        is_stance = leg_phase[:, index] < threshold
-        reward += (~(is_stance ^ is_contact[:, index])).float()
-
-    if command_name is not None:
-        command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
-        reward *= command_norm > 0.1
-    return reward
-
-
-def all_feet_air(
-    env: ManagerBasedRLEnv,
-    sensor_cfg: SceneEntityCfg,
-    command_name: str = "base_velocity",
-) -> torch.Tensor:
-    """Penalize bounding/hopping where every foot is airborne at once."""
-
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
-    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
-    return (~torch.any(is_contact, dim=1)).float() * (command_norm > 0.1).float()
-
-
-def feet_contact_count_error(
-    env: ManagerBasedRLEnv,
-    sensor_cfg: SceneEntityCfg,
-    command_name: str = "base_velocity",
-    moving_contact_count: float = 2.0,
-    standing_contact_count: float = 4.0,
-) -> torch.Tensor:
-    """Penalize contact patterns far from two-leg trot support while moving."""
-
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
-    contact_count = torch.sum(is_contact.float(), dim=1)
-    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
-    target_count = torch.where(
-        command_norm > 0.1,
-        torch.full_like(contact_count, moving_contact_count),
-        torch.full_like(contact_count, standing_contact_count),
-    )
-    return torch.square(contact_count - target_count)
-
-
-def diagonal_trot_contact_reward(
-    env: ManagerBasedRLEnv,
-    sensor_cfg: SceneEntityCfg,
-    command_name: str = "base_velocity",
-) -> torch.Tensor:
-    """Reward phase-free diagonal two-foot support while moving.
-
-    The foot order is expected to be FL, FR, HL, HR. This avoids tying the policy
-    to an unobserved episode-time clock while still preferring trot-like contacts.
-    """
-
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
-    if is_contact.shape[1] != 4:
-        return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
-
-    fl, fr, hl, hr = [is_contact[:, index] for index in range(4)]
-    diagonal_support = torch.logical_or(fl & hr & ~fr & ~hl, fr & hl & ~fl & ~hr)
-    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
-    return diagonal_support.float() * (command_norm > 0.1).float()
-
-
-def bad_two_foot_contact_pattern(
-    env: ManagerBasedRLEnv,
-    sensor_cfg: SceneEntityCfg,
-    command_name: str = "base_velocity",
-) -> torch.Tensor:
-    """Penalize two-foot support patterns that look like bounding or pacing."""
-
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
-    if is_contact.shape[1] != 4:
-        return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
-
-    fl, fr, hl, hr = [is_contact[:, index] for index in range(4)]
-    contact_count = torch.sum(is_contact.float(), dim=1)
-    two_feet = contact_count == 2.0
-    front_pair = fl & fr
-    hind_pair = hl & hr
-    left_pair = fl & hl
-    right_pair = fr & hr
-    bad_pair = front_pair | hind_pair | left_pair | right_pair
-    command_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
-    return (two_feet & bad_pair).float() * (command_norm > 0.1).float()
-
-
+# 内部辅助：根据足端 xy 位置匹配最近的高度扫描点，估计足端相对地形的高度。
 def _foot_heights_above_terrain(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
@@ -440,25 +266,7 @@ def _foot_heights_above_terrain(
     return foot_pos[..., 2] - terrain_z
 
 
-def foot_clearance_reward(
-    env: ManagerBasedRLEnv,
-    asset_cfg: SceneEntityCfg,
-    target_height: float,
-    std: float,
-    tanh_mult: float,
-    command_name: str = "base_velocity",
-) -> torch.Tensor:
-    """Reward swing feet for clearing the target height."""
-
-    asset: RigidObject = env.scene[asset_cfg.name]
-    foot_z_target_error = torch.square(asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - target_height)
-    foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
-    reward = foot_velocity_tanh * torch.exp(-foot_z_target_error / std)
-    reward = torch.mean(reward, dim=1)
-    reward *= torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
-    return reward
-
-
+# 惩罚移动足端相对地形的离地高度偏离目标值，鼓励抬脚越障但不过度抬高。
 def foot_clearance_terrain_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
@@ -472,12 +280,15 @@ def foot_clearance_terrain_l2(
 
     asset: RigidObject = env.scene[asset_cfg.name]
     foot_heights = _foot_heights_above_terrain(env, asset_cfg, sensor_cfg)
-    foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
+    foot_velocity_tanh = torch.tanh(
+        tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2)
+    )
     penalty = torch.mean(torch.square(foot_heights - target_height) * foot_velocity_tanh, dim=1)
     command_norm = torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
     return penalty * (command_norm > command_threshold).float()
 
 
+# 只对空中摆动足施加相对地形高度惩罚，让摆动腿贴近目标离地高度。
 def feet_swing_height_terrain_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
@@ -495,30 +306,3 @@ def feet_swing_height_terrain_l2(
     penalty = torch.mean(torch.square(foot_heights - target_height) * in_air.float(), dim=1)
     command_norm = torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
     return penalty * (command_norm > command_threshold).float()
-
-
-def feet_height_body(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    asset_cfg: SceneEntityCfg,
-    target_height: float,
-    tanh_mult: float,
-) -> torch.Tensor:
-    """Penalize swing-foot height error in the base frame."""
-
-    asset: RigidObject = env.scene[asset_cfg.name]
-    foot_pos_translated = asset.data.body_pos_w[:, asset_cfg.body_ids, :] - asset.data.root_pos_w[:, :].unsqueeze(1)
-    foot_vel_translated = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :] - asset.data.root_lin_vel_w[
-        :, :
-    ].unsqueeze(1)
-    foot_pos_b = torch.zeros(env.num_envs, len(asset_cfg.body_ids), 3, device=env.device)
-    foot_vel_b = torch.zeros(env.num_envs, len(asset_cfg.body_ids), 3, device=env.device)
-    for index in range(len(asset_cfg.body_ids)):
-        foot_pos_b[:, index, :] = quat_apply_inverse(asset.data.root_quat_w, foot_pos_translated[:, index, :])
-        foot_vel_b[:, index, :] = quat_apply_inverse(asset.data.root_quat_w, foot_vel_translated[:, index, :])
-
-    foot_z_target_error = torch.square(foot_pos_b[:, :, 2] - target_height).view(env.num_envs, -1)
-    foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(foot_vel_b[:, :, :2], dim=2))
-    penalty = torch.sum(foot_z_target_error * foot_velocity_tanh, dim=1)
-    penalty *= torch.linalg.norm(env.command_manager.get_command(command_name), dim=1) > 0.1
-    return penalty

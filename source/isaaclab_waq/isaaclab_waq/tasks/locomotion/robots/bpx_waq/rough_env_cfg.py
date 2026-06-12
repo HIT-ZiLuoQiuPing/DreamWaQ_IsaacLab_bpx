@@ -33,6 +33,12 @@ from isaaclab_waq.tasks.locomotion import mdp
 
 HIND_FEET_BODY_NAMES = ["hl_toe_link", "hr_toe_link"]
 HIND_CALF_BODY_NAMES = ["hl_calf_link", "hr_calf_link"]
+HIP_ROLL_JOINT_NAMES = [
+    "fl_hip_roll_joint",
+    "fr_hip_roll_joint",
+    "hl_hip_roll_joint",
+    "hr_hip_roll_joint",
+]
 HIND_HIP_ROLL_JOINT_NAMES = ["hl_hip_roll_joint", "hr_hip_roll_joint"]
 HIND_LEG_JOINT_NAMES = [
     "hl_hip_roll_joint",
@@ -199,13 +205,16 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         base_ang_vel = ObsTerm(
             func=mdp.base_link_ang_vel,
-            scale=0.2,
+            scale=0.25,
             clip=(-100, 100),
             noise=Unoise(n_min=-0.2, n_max=0.2),
         )
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100, 100), noise=Unoise(n_min=-0.05, n_max=0.05))
         velocity_commands = ObsTerm(
-            func=mdp.generated_commands, clip=(-100, 100), params={"command_name": "base_velocity"}
+            func=mdp.generated_commands,
+            scale=(2.0, 2.0, 0.25),
+            clip=(-100, 100),
+            params={"command_name": "base_velocity"},
         )
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, clip=(-100, 100), noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel_rel = ObsTerm(
@@ -223,7 +232,9 @@ class ObservationsCfg:
     class CENetCfg(PolicyCfg):
         def __post_init__(self):
             super().__post_init__()
-            self.history_length = 15
+            # Keep CENet history aligned with the fixed BPX sim2real deploy stack:
+            # 5 frames * 45 actor observations = 225 encoder input dims.
+            self.history_length = 5
             self.flatten_history_dim = True
 
     cenet: CENetCfg = CENetCfg()
@@ -270,10 +281,13 @@ class ObservationsCfg:
     @configclass
     class CriticCfg(ObsGroup):
         base_lin_vel = ObsTerm(func=mdp.base_link_lin_vel, clip=(-100, 100))
-        base_ang_vel = ObsTerm(func=mdp.base_link_ang_vel, scale=0.2, clip=(-100, 100))
+        base_ang_vel = ObsTerm(func=mdp.base_link_ang_vel, scale=0.25, clip=(-100, 100))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100, 100))
         velocity_commands = ObsTerm(
-            func=mdp.generated_commands, clip=(-100, 100), params={"command_name": "base_velocity"}
+            func=mdp.generated_commands,
+            scale=(2.0, 2.0, 0.25),
+            clip=(-100, 100),
+            params={"command_name": "base_velocity"},
         )
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, clip=(-100, 100))
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, clip=(-100, 100))
@@ -377,62 +391,85 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
+    # 存活奖励：只要环境没有终止就给小正奖励，避免策略主动摔倒结束回合。
     alive = RewTerm(func=mdp.is_alive, weight=0.05)
+    # 直立奖励：鼓励机身 z 轴对齐重力反方向，减少侧翻和前后翻倒。
     upright = RewTerm(func=mdp.upright_exp, weight=0.35, params={"std": 0.45})
 
+    # 平面速度跟踪：奖励机身 xy 线速度接近 base_velocity 指令。
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
         weight=3.5,
         params={"command_name": "base_velocity", "std": 0.35},
     )
+    # 偏航角速度跟踪：奖励机身 yaw 角速度接近指令值。
     track_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp,
         weight=3.2,
         params={"command_name": "base_velocity", "std": 0.40},
     )
+    # 前向速度精细跟踪：在整体 xy 跟踪之外，更严格地对齐 x 方向速度。
     track_forward_velocity_fine = RewTerm(
         func=mdp.track_forward_velocity_exp,
         weight=1.4,
         params={"command_name": "base_velocity", "std": 0.25},
     )
-    forward_velocity_error = None
-    no_forward_motion = None
-    crawl_penalty = None
+    # 侧向速度精细跟踪：更严格地对齐 y 方向速度，减少无指令侧移。
     track_lateral_velocity_fine = RewTerm(
         func=mdp.track_lateral_velocity_exp,
         weight=1.2,
         params={"command_name": "base_velocity", "std": 0.16},
     )
+    # 偏航速度精细跟踪：在整体 yaw 跟踪之外，加强小误差范围内的转向控制。
     track_yaw_velocity_fine = RewTerm(
         func=mdp.track_yaw_velocity_exp,
         weight=1.4,
         params={"command_name": "base_velocity", "std": 0.25},
     )
+    # 前进时侧向漂移惩罚：指令主要向前时，惩罚实际 y 速度。
     forward_lateral_drift = RewTerm(
         func=mdp.forward_lateral_drift,
         weight=-1.5,
         params={"command_name": "base_velocity"},
     )
+    # 前进时偏航漂移惩罚：指令主要向前时，惩罚未被指令要求的 yaw 角速度。
     forward_yaw_drift = RewTerm(
         func=mdp.forward_yaw_drift,
         weight=-1.2,
         params={"command_name": "base_velocity"},
     )
+    # 竖直速度惩罚：减少机身上下弹跳。
     lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
+    # 横滚/俯仰角速度惩罚：减少机身晃动。
     ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    # 姿态倾斜惩罚：让机身尽量保持水平。
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.5)
+    # 机身高度误差惩罚：相对扫描地形维持目标高度。
     base_height = RewTerm(
         func=mdp.base_height_above_terrain_l2,
         weight=-3.0,
         params={"target_height": 0.42, "sensor_cfg": SceneEntityCfg("height_scanner")},
     )
+    # 低高度惩罚：只惩罚低于目标高度的情况，降低机身触地风险。
+    base_height_low = RewTerm(
+        func=mdp.base_height_below_target_l1,
+        weight=-2.0,
+        params={"target_height": 0.43, "sensor_cfg": SceneEntityCfg("height_scanner")},
+    )
+    # 关节速度惩罚：抑制高频抖动。
     joint_vel = RewTerm(func=mdp.joint_vel_l2, weight=-4.0e-4)
+    # 关节加速度惩罚：让动作变化更平滑。
     joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-5.0e-8)
+    # 关节力矩惩罚：减少过大的执行器输出。
     joint_torques = RewTerm(func=mdp.joint_torques_l2, weight=-2.0e-5)
+    # 动作变化率惩罚：限制相邻 action 的跳变。
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.12)
+    # 关节限位惩罚：避免关节贴近或超过位置限制。
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
+    # 能耗惩罚：按关节速度和力矩估计功率，鼓励省力步态。
     energy = RewTerm(func=mdp.energy, weight=-5.0e-6)
 
+    # 全部受控关节姿态惩罚：限制整体关节偏离默认站姿。
     joint_pos = RewTerm(
         func=mdp.joint_position_penalty,
         weight=-0.08,
@@ -442,18 +479,30 @@ class RewardsCfg:
             "velocity_threshold": 0.3,
         },
     )
+    # 髋 roll 姿态惩罚：限制四条腿外展/内收过大。
+    hip_roll_pose = RewTerm(
+        func=mdp.joint_position_penalty,
+        weight=-0.25,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=HIP_ROLL_JOINT_NAMES),
+            "stand_still_scale": 1.0,
+            "velocity_threshold": 0.3,
+        },
+    )
+    # 后腿髋 roll 姿态惩罚：额外稳定后腿侧向姿态。
     hind_hip_roll_pose = RewTerm(
         func=mdp.joint_position_penalty,
-        weight=-0.35,
+        weight=-0.15,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=HIND_HIP_ROLL_JOINT_NAMES),
             "stand_still_scale": 1.0,
             "velocity_threshold": 0.3,
         },
     )
+    # 后腿整体姿态惩罚：约束后腿 roll/pitch/knee 不要偏离默认姿态太远。
     hind_leg_pose = RewTerm(
         func=mdp.joint_position_penalty,
-        weight=-0.05,
+        weight=-0.10,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=HIND_LEG_JOINT_NAMES),
             "stand_still_scale": 1.0,
@@ -461,6 +510,7 @@ class RewardsCfg:
         },
     )
 
+    # 足端腾空时间奖励：运动时鼓励足端有足够摆动时间，减少拖脚。
     feet_air_time = RewTerm(
         func=mdp.feet_air_time,
         weight=0.2,
@@ -470,7 +520,7 @@ class RewardsCfg:
             "threshold": 0.25,
         },
     )
-    air_time_variance = None
+    # 足端滑移惩罚：足端接触地面时惩罚水平滑动。
     feet_slide = RewTerm(
         func=mdp.feet_slide,
         weight=-0.05,
@@ -479,47 +529,48 @@ class RewardsCfg:
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
+    # 足端离地高度惩罚：移动足端相对地形保持目标 clearance。
     feet_clearance = RewTerm(
         func=mdp.foot_clearance_terrain_l2,
-        weight=-2.0,
+        weight=-1.8,
         params={
-            "target_height": 0.12,
+            "target_height": 0.13,
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
             "sensor_cfg": SceneEntityCfg("height_scanner"),
         },
     )
+    # 摆动足高度惩罚：只对离地足端约束相对地形高度。
     feet_swing_height = RewTerm(
         func=mdp.feet_swing_height_terrain_l2,
-        weight=-0.25,
+        weight=-0.30,
         params={
-            "target_height": 0.12,
+            "target_height": 0.13,
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=FEET_BODY_NAMES_ORDERED),
             "sensor_cfg": SceneEntityCfg("height_scanner"),
             "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED),
         },
     )
+    # 后足摆动高度惩罚：后足使用略高目标，帮助后腿越过粗糙地形。
     hind_feet_swing_height = RewTerm(
         func=mdp.feet_swing_height_terrain_l2,
-        weight=-0.24,
+        weight=-0.35,
         params={
-            "target_height": 0.14,
+            "target_height": 0.16,
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=HIND_FEET_BODY_NAMES),
             "sensor_cfg": SceneEntityCfg("height_scanner"),
             "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=HIND_FEET_BODY_NAMES),
         },
     )
-    diagonal_trot_contact = None
-    bad_two_foot_contact = None
-    all_feet_air = None
-    feet_contact_count = None
+    # 足端绊脚惩罚：水平接触力远大于竖直接触力时，认为足端撞到侧壁或台阶。
     feet_stumble = RewTerm(
         func=mdp.feet_stumble,
         weight=-0.2,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=FEET_BODY_NAMES_ORDERED)},
     )
+    # 非期望接触惩罚：惩罚小腿等非足端部位接触地面。
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,
         weight=-0.15,
@@ -528,14 +579,16 @@ class RewardsCfg:
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_calf_link"),
         },
     )
+    # 后小腿接触惩罚：对后腿小腿触地给更强惩罚，减少跪地或拖后腿。
     hind_calf_contacts = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-0.75,
+        weight=-1.20,
         params={
             "threshold": 1.0,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=HIND_CALF_BODY_NAMES),
         },
     )
+    # 终止惩罚：环境提前终止时给大负奖励。
     termination = RewTerm(func=mdp.is_terminated, weight=-25.0)
 
 

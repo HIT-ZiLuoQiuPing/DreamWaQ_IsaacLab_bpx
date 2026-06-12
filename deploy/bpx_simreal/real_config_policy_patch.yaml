@@ -1,0 +1,57 @@
+# WARNING: old 15-frame checkpoint contract only.
+# Do not copy this into the fixed 5-frame bpx_simreal_v6 upper stack.
+# Retrain with the updated training config, then regenerate this patch from
+# scripts/waq/export_simreal_policy.py.
+# Copy these values into bpx_simreal_v6 configs/real_config_working.yaml
+# under isaaclab_policy_contract before loading this policy on the SDK UI.
+isaaclab_policy_contract:
+  action_formula: q_des_sim = default_joint_pos + clip(action,-clip,clip) * action_scale
+  action_scale: 0.37995443868
+  obs_order:
+    - root_ang_vel_b * 0.2
+    - projected_gravity_b * 1.0
+    - command_xy_yaw * [1.0, 1.0, 1.0]
+    - joint_pos_minus_default * 1.0
+    - joint_vel * 0.05
+    - last_action * 1.0
+  dwaq_history_length: 15
+  actor_obs_single_frame_dim: 45
+  encoder_input_dim: 675
+  policy_input_mode: auto
+  supported_policy_input_dims:
+    history_only: 675
+    current_plus_history: 720
+  command_scale:
+    vx: 1.0
+    vy: 1.0
+    wz: 1.0
+  obs_scales:
+    ang_vel: 0.2
+    projected_gravity: 1.0
+    lin_vel_command_x: 1.0
+    lin_vel_command_y: 1.0
+    ang_vel_command_z: 1.0
+    joint_pos: 1.0
+    joint_vel: 0.05
+    last_action: 1.0
+  default_joint_pos:
+    fl_hip_roll_joint: 0
+    fr_hip_roll_joint: 0
+    hl_hip_roll_joint: 0
+    hr_hip_roll_joint: 0
+    fl_hip_pitch_joint: 0.6
+    fr_hip_pitch_joint: 0.6
+    hl_hip_pitch_joint: 0.6
+    hr_hip_pitch_joint: 0.6
+    fl_knee_joint: -1.2
+    fr_knee_joint: -1.2
+    hl_knee_joint: -1.2
+    hr_knee_joint: -1.2
+  history_layout_note: SDK/UI input is frame_major_oldest_to_newest; exported wrapper converts it to term_major_oldest_to_newest internally.
+  deploy_action_guard:
+    enabled: true
+    clip: 0.12
+    meaning: EXTRA REAL ROBOT SAFETY GUARD. Keep small for first hanging/support tests.
+    last_action_source_when_enabled: sent_action
+    last_action_source_when_disabled: sim_action
+    target_rate_limit_enabled: true

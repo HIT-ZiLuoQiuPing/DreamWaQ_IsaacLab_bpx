@@ -173,7 +173,7 @@ def _default_stand_metadata() -> dict:
     """Build enough metadata to test the MuJoCo XML and PD layer without a policy."""
 
     num_actor_obs = 45
-    history_length = 15
+    history_length = 5
     return {
         "joint_names": DEFAULT_JOINT_NAMES,
         "default_joint_pos": [_joint_default(name) for name in DEFAULT_JOINT_NAMES],
@@ -498,9 +498,9 @@ class BpxMujocoSim:
 
     def build_observation_terms(self) -> list[np.ndarray]:
         return [
-            (self.base_ang_vel() * 0.2).astype(np.float32),
+            (self.base_ang_vel() * 0.25).astype(np.float32),
             _projected_gravity(self.base_quat()).astype(np.float32),
-            np.asarray(self.command, dtype=np.float32),
+            (np.asarray(self.command, dtype=np.float32) * np.array([2.0, 2.0, 0.25], dtype=np.float32)),
             (self.joint_pos() - self.default_joint_pos).astype(np.float32),
             (self.joint_vel() * 0.05).astype(np.float32),
             self.last_action.astype(np.float32),

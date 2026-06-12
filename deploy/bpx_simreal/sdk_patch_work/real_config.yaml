@@ -1,0 +1,523 @@
+profile:
+  name: BPX XWK Sim2Real Workstation
+  author: xwk
+  robot: C2P1 / BPX wheel-leg
+  urdf_path: urdf/c2p1.urdf
+  formula: q_sim = scale * q_raw + offset
+  inverse_formula: q_raw_cmd = (q_sim_cmd - offset) / scale
+  sdk_public_joint_dof: 12
+  ui_joint_dof: 16
+  note: 'Public bpx_sdk_open JointLevelControl exposes 12-DOF joint arrays. This workstation
+    visualizes 16 URDF joints and reserves four ankle/wheel joints, but real SDK joint
+    commands are limited to the first verified 12 leg joints until the wheel/16-DOF
+    API is available.
+
+    '
+isaaclab_policy_contract:
+  action_formula: q_des_sim = default_joint_pos + clip(action,-clip,clip) * action_scale
+  action_scale: 0.3799544386804864
+  obs_order:
+  - root_ang_vel_b * 0.2
+  - projected_gravity_b * 1.0
+  - command_xy_yaw * [1.0, 1.0, 1.0]
+  - joint_pos_minus_default * 1.0
+  - joint_vel * 0.05
+  - last_action * 1.0
+  dwaq_history_length: 15
+  actor_obs_single_frame_dim: 45
+  encoder_input_dim: 675
+  policy_input_mode: auto
+  supported_policy_input_dims:
+    history_only: 675
+    current_plus_history: 720
+  warning: true-real deploy must build q_sim from calibrated raw joints, never raw
+    SDK joint values.
+  scale_note: 'Current policy is exported from IsaacLab WAQ model_42000.pt:
+    omega*0.2, gravity*1, command*[1,1,1], qpos*1, qvel*0.05, last_action*1, action_scale=0.3799544386804864.'
+  command_scale:
+    vx: 1.0
+    vy: 1.0
+    wz: 1.0
+    mode: IsaacLab WAQ export defaults
+  action_formula_sim2sim_exact: target_joint_pos = DEFAULT_JOINT_POS + np.clip(policy(obs_history),
+    -clip_actions, clip_actions) * action_scale
+  sim_clip_actions: 100.0
+  deploy_action_guard:
+    enabled: true
+    clip: 0.12
+    meaning: EXTRA REAL ROBOT SAFETY GUARD. This is NOT sim2sim clip_actions. Disable
+      only when hanging and verifying strict sim2sim contract.
+    last_action_source_when_enabled: sent_action
+    last_action_source_when_disabled: sim_action
+    target_rate_limit_enabled: true
+  strict_notes:
+  - clip_actions is the sim2sim/training action clip; in the demo it is 100.0 and
+    is applied before action_scale.
+  - deploy_action_guard is an extra real-robot safety guard and must not be confused
+    with clip_actions.
+  - default_joint_pos must match the exported IsaacLab policy metadata.
+  - action order must be IsaacLab type-major JOINT_NAMES; SDK order is grouped by leg via sdk_index.
+  - URDF limits are used for sim soft clamping before raw SDK conversion.
+  source: EXPORTED_FROM /home/ubuntu/isaaclab_waq/logs/waq/bpx_waq_rough/2026-06-09_18-19-51/model_42000.pt
+  joint_order_source: IsaacLab WAQ export metadata
+  rl_joint_order_12: &id001
+  - fl_hip_roll_joint
+  - fr_hip_roll_joint
+  - hl_hip_roll_joint
+  - hr_hip_roll_joint
+  - fl_hip_pitch_joint
+  - fr_hip_pitch_joint
+  - hl_hip_pitch_joint
+  - hr_hip_pitch_joint
+  - fl_knee_joint
+  - fr_knee_joint
+  - hl_knee_joint
+  - hr_knee_joint
+  default_joint_pos:
+    fl_hip_roll_joint: 0.0
+    fr_hip_roll_joint: 0.0
+    hl_hip_roll_joint: 0.0
+    hr_hip_roll_joint: 0.0
+    fl_hip_pitch_joint: 0.6
+    fr_hip_pitch_joint: 0.6
+    hl_hip_pitch_joint: 0.6
+    hr_hip_pitch_joint: 0.6
+    fl_knee_joint: -1.2
+    fr_knee_joint: -1.2
+    hl_knee_joint: -1.2
+    hr_knee_joint: -1.2
+  default_joint_pos_note: Exported IsaacLab WAQ policy default_joint_pos. hip_roll defaults are 0.0.
+  strict_sim2sim_demo_input_dim: 675
+  preferred_policy_input_mode_for_demo: history_only
+  clip_actions: 100.0
+  clip_obs: 100.0
+  obs_scales:
+    ang_vel: 0.2
+    projected_gravity: 1.0
+    lin_vel_command_x: 1.0
+    lin_vel_command_y: 1.0
+    ang_vel_command_z: 1.0
+    joint_pos: 1.0
+    joint_vel: 0.05
+    last_action: 1.0
+  sim_pd:
+    kp: 19.739208801050342
+    kd: 1.2566370614
+    torque_formula: torque = kp * (target_joint_pos - joint_pos) - kd * joint_vel
+  sim_timing:
+    sim_dt: 0.005
+    decimation: 4
+    policy_dt: 0.02
+    policy_hz: 50.0
+rl_joint_order_12: *id001
+calibration:
+  version: 2
+  created_by: xwk_s2r_workstation
+  formula: q_sim = scale * q_raw + offset
+  inverse_formula: q_raw_cmd = (q_sim_cmd - offset) / scale
+  imu:
+    level_quat_raw_xyzw:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    body_axis_note: pending calibration
+    omega_bias:
+    - 0.0
+    - 0.0
+    - 0.0
+  joints:
+    fl_hip_roll_joint:
+      sdk_index: 0
+      scale: 1.0
+      offset: -0.0037701714000000002
+      raw_at_sim_lower: -0.859285
+      raw_at_sim_upper: 0.884596
+      raw_at_crouch_zero: 0.0037701714000000002
+      sim_at_crouch_zero: 0.0
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 1.0
+      - 0.0
+      - 0.0
+      sim_lower: -0.8727
+      sim_upper: 0.8727
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    fl_hip_pitch_joint:
+      sdk_index: 1
+      scale: 1.0
+      offset: 0.0043290499999999454
+      raw_at_sim_lower: -0.782913
+      raw_at_sim_upper: 2.6115
+      raw_at_crouch_zero: 1.16567095
+      sim_at_crouch_zero: 1.17
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -0.7854
+      sim_upper: 2.60661
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    fl_knee_joint:
+      sdk_index: 2
+      scale: 1.0
+      offset: 0.003738250000000054
+      raw_at_sim_lower: -2.77882
+      raw_at_sim_upper: -0.593826
+      raw_at_crouch_zero: -2.78373825
+      sim_at_crouch_zero: -2.78
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -2.7531
+      sim_upper: -0.5539
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    fl_ankle_joint:
+      sdk_index: null
+      scale: 1.0
+      offset: 0.0
+      raw_at_sim_lower: null
+      raw_at_sim_upper: null
+      raw_at_crouch_zero: null
+      sim_at_crouch_zero: null
+      soft_lower: null
+      soft_upper: null
+      enabled: false
+      direction: 正向
+      limit_quality: 待处理
+      urdf_type: fixed
+    fr_hip_roll_joint:
+      sdk_index: 3
+      scale: 1.0
+      offset: 0.010443047
+      raw_at_sim_lower: -0.875101
+      raw_at_sim_upper: 0.866255
+      raw_at_crouch_zero: -0.010443047
+      sim_at_crouch_zero: 0.0
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 1.0
+      - 0.0
+      - 0.0
+      sim_lower: -0.8727
+      sim_upper: 0.8727
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    fr_hip_pitch_joint:
+      sdk_index: 4
+      scale: 1.0
+      offset: 0.005416949999999865
+      raw_at_sim_lower: -0.764734
+      raw_at_sim_upper: 2.63086
+      raw_at_crouch_zero: 1.16458305
+      sim_at_crouch_zero: 1.17
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -0.7854
+      sim_upper: 2.60661
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    fr_knee_joint:
+      sdk_index: 5
+      scale: 1.0
+      offset: 0.003742200000000029
+      raw_at_sim_lower: -2.78604
+      raw_at_sim_upper: -0.598556
+      raw_at_crouch_zero: -2.7837422
+      sim_at_crouch_zero: -2.78
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -2.7531
+      sim_upper: -0.5539
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    fr_ankle_joint:
+      sdk_index: null
+      scale: 1.0
+      offset: 0.0
+      raw_at_sim_lower: null
+      raw_at_sim_upper: null
+      raw_at_crouch_zero: null
+      sim_at_crouch_zero: null
+      soft_lower: null
+      soft_upper: null
+      enabled: false
+      direction: 正向
+      limit_quality: 待处理
+      urdf_type: fixed
+    hl_hip_roll_joint:
+      sdk_index: 6
+      scale: 1.0
+      offset: 0.0081467471
+      raw_at_sim_lower: -0.865739
+      raw_at_sim_upper: 0.877758
+      raw_at_crouch_zero: -0.0081467471
+      sim_at_crouch_zero: 0.0
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 1.0
+      - 0.0
+      - 0.0
+      sim_lower: -0.8727
+      sim_upper: 0.8727
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    hl_hip_pitch_joint:
+      sdk_index: 7
+      scale: 1.0
+      offset: -0.03180000000000005
+      raw_at_sim_lower: -0.769399
+      raw_at_sim_upper: 2.633
+      raw_at_crouch_zero: 1.2018
+      sim_at_crouch_zero: 1.17
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -0.7854
+      sim_upper: 2.60661
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    hl_knee_joint:
+      sdk_index: 8
+      scale: 1.0
+      offset: 0.008797050000000084
+      raw_at_sim_lower: -2.78949
+      raw_at_sim_upper: -0.593853
+      raw_at_crouch_zero: -2.78879705
+      sim_at_crouch_zero: -2.78
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -2.7531
+      sim_upper: -0.5539
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    hl_ankle_joint:
+      sdk_index: null
+      scale: 1.0
+      offset: 0.0
+      raw_at_sim_lower: null
+      raw_at_sim_upper: null
+      raw_at_crouch_zero: null
+      sim_at_crouch_zero: null
+      soft_lower: null
+      soft_upper: null
+      enabled: false
+      direction: 正向
+      limit_quality: 待处理
+      urdf_type: fixed
+    hr_hip_roll_joint:
+      sdk_index: 9
+      scale: 1.0
+      offset: -0.00303136775
+      raw_at_sim_lower: -0.883061
+      raw_at_sim_upper: 0.860116
+      raw_at_crouch_zero: 0.00303136775
+      sim_at_crouch_zero: 0.0
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 1.0
+      - 0.0
+      - 0.0
+      sim_lower: -0.8727
+      sim_upper: 0.8727
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    hr_hip_pitch_joint:
+      sdk_index: 10
+      scale: 1.0
+      offset: -0.01408055000000008
+      raw_at_sim_lower: -0.776015
+      raw_at_sim_upper: 2.62067
+      raw_at_crouch_zero: 1.18408055
+      sim_at_crouch_zero: 1.17
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -0.7854
+      sim_upper: 2.60661
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    hr_knee_joint:
+      sdk_index: 11
+      scale: 1.0005737192888426
+      offset: 0.02755982763852849
+      raw_at_sim_lower: -2.80656
+      raw_at_sim_upper: -0.608621
+      raw_at_crouch_zero: -2.80595
+      sim_at_crouch_zero: -2.78
+      soft_lower: null
+      soft_upper: null
+      enabled: true
+      direction: 正向
+      limit_quality: 正常
+      urdf_type: revolute
+      urdf_axis_xyz:
+      - 0.0
+      - 1.0
+      - 0.0
+      sim_lower: -2.7531
+      sim_upper: -0.5539
+      urdf_effort: 30.0
+      urdf_velocity: 20.0
+    hr_ankle_joint:
+      sdk_index: null
+      scale: 1.0
+      offset: 0.0
+      raw_at_sim_lower: null
+      raw_at_sim_upper: null
+      raw_at_crouch_zero: null
+      sim_at_crouch_zero: null
+      soft_lower: null
+      soft_upper: null
+      enabled: false
+      direction: 正向
+      limit_quality: 待处理
+      urdf_type: fixed
+crouch_zero_pose:
+  pose_name: crouch_zero_theory
+  source: xwk_measured_crouch_calibration_pose_2026-06-11
+  unit: rad
+  joints:
+    fl_hip_roll_joint: 0.0
+    fr_hip_roll_joint: 0.0
+    hl_hip_roll_joint: 0.0
+    hr_hip_roll_joint: 0.0
+    fl_hip_pitch_joint: 1.17
+    fr_hip_pitch_joint: 1.17
+    hl_hip_pitch_joint: 1.17
+    hr_hip_pitch_joint: 1.17
+    fl_knee_joint: -2.78
+    fr_knee_joint: -2.78
+    hl_knee_joint: -2.78
+    hr_knee_joint: -2.78
+safety:
+  rate_hz: 50
+  command_timeout_s: 0.15
+  max_abs_roll_rad: 0.61
+  max_abs_pitch_rad: 0.61
+  max_motor_temp_c: 70.0
+  max_driver_temp_c: 80.0
+  max_battery_current_a: 30.0
+  first_test_action_clip: 0.12
+  single_step_max_delta_sim_rad: 0.025
+  single_step_max_delta_raw_rad: 0.025
+  soft_limit_margin_rad: 0.08
+  allowed_control_levels:
+  - READ_ONLY
+  - TEACH_DAMPING
+  - SINGLE_JOINT_LOW_GAIN
+  - SINGLE_LEG_LOW_GAIN
+  - WHOLE_BODY_HOLD_HANG_ONLY
+  - RL_HANG_ONLY
+  imu_calibration_required_before_stand: true
+  imu_filter_alpha_default: 0.15
+  command_smooth_alpha_default: 0.12
+pd_profiles:
+  profiles:
+    teach_zero:
+      kp: 0.0
+      kd: 0.0
+      tff: 0.0
+    single_joint_start:
+      kp: 3.0
+      kd: 0.15
+      tff: 0.0
+    hang_hold_cautious:
+      kp: 6.0
+      kd: 0.35
+      tff: 0.0
+    rl_hang_only:
+      kp: 6.0
+      kd: 0.35
+      tff: 0.0
+    ground_probe_very_slow:
+      kp: 8.0
+      kd: 0.45
+      tff: 0.0
+sdk_joint_order_12:
+- fl_hip_roll_joint
+- fl_hip_pitch_joint
+- fl_knee_joint
+- fr_hip_roll_joint
+- fr_hip_pitch_joint
+- fr_knee_joint
+- hl_hip_roll_joint
+- hl_hip_pitch_joint
+- hl_knee_joint
+- hr_hip_roll_joint
+- hr_hip_pitch_joint
+- hr_knee_joint

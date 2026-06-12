@@ -13,7 +13,8 @@ BPX_DAMPING_RATIO = 2.0
 BPX_STIFFNESS = BPX_ARMATURE * BPX_NATURAL_FREQUENCY**2
 BPX_DAMPING = 2.0 * BPX_DAMPING_RATIO * BPX_ARMATURE * BPX_NATURAL_FREQUENCY
 BPX_DEFAULT_BASE_HEIGHT = 0.42
-BPX_DEFAULT_ACTION_SCALE = 0.25 * BPX_EFFORT_LIMIT / BPX_STIFFNESS
+# The sim2real stack applies actions as joint-position deltas with a 0.25 rad scale.
+BPX_DEFAULT_ACTION_SCALE = 0.25
 BPX_ACTION_SCALE = {
     ".*_hip_roll_joint": BPX_DEFAULT_ACTION_SCALE,
     ".*_hip_pitch_joint": BPX_DEFAULT_ACTION_SCALE,
@@ -22,8 +23,8 @@ BPX_ACTION_SCALE = {
 
 BPX_STAND_JOINT_POS = {
     ".*_hip_roll_joint": 0.0,
-    ".*_hip_pitch_joint": 0.60,
-    ".*_knee_joint": -1.20,
+    ".*_hip_pitch_joint": 0.80,
+    ".*_knee_joint": -1.50,
 }
 
 # MuJoCo deployment uses the same action signs as IsaacLab. The important

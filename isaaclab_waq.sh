@@ -33,6 +33,11 @@ while [[ $# -gt 0 ]]; do
             "${python_exe}" "${ISAACLAB_WAQ_PATH}/scripts/waq/export_policy.py" "$@"
             break
             ;;
+        -wsr|--waq-export-simreal)
+            shift
+            "${python_exe}" "${ISAACLAB_WAQ_PATH}/scripts/waq/export_simreal_policy.py" "$@"
+            break
+            ;;
         -mp|--mujoco-play)
             shift
             "${python_exe}" "${ISAACLAB_WAQ_PATH}/scripts/sim2sim/mujoco_play.py" "$@"
@@ -40,7 +45,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "[Error] Invalid argument provided: $1"
-            echo "Usage: ./isaaclab_waq.sh --install | --waq-train [args] | --waq-play [args] | --waq-export [args] | --mujoco-play [args]"
+            echo "Usage: ./isaaclab_waq.sh --install | --waq-train [args] | --waq-play [args] | --waq-export [args] | --waq-export-simreal [args] | --mujoco-play [args]"
             exit 1
             ;;
     esac
